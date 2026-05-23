@@ -5,7 +5,7 @@
 import logging
 from datetime import datetime, timedelta
 from calendar import monthrange
-from app.database import transactions_collection
+from app import database
 
 logger = logging.getLogger(__name__)
 
@@ -66,4 +66,3 @@ async def get_mis_status():
 def get_mis_history():
     """Returns an empty history log as cleanups no longer occur."""
     return []
-

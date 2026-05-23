@@ -202,20 +202,26 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
-    const tempId = Date.now().toString();
-    const optimisticTx = { ...data, id: tempId, user_id: 'temp' } as Transaction;
-    setAllTransactions(prev => [optimisticTx, ...prev]);
-    try {
-      const res = await endpoints.addTransaction(data);
-      const newTx = res.data;
-      setAllTransactions(prev => prev.map(tx => tx.id === tempId ? { ...newTx, id: newTx.id || newTx._id } : tx));
-      toast.success('Transaction added');
-    } catch (e) {
-      setAllTransactions(prev => prev.filter(tx => tx.id !== tempId));
-      toast.error('Failed to add transaction');
-    }
-  };
+const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
+  console.log('📨 Adding transaction with data:', data);
+  
+  const tempId = Date.now().toString();
+  const optimisticTx = { ...data, id: tempId, user_id: 'temp' } as Transaction;
+  setAllTransactions(prev => [optimisticTx, ...prev]);
+  try {
+    const res = await endpoints.addTransaction(data);
+    const newTx = res.data;
+    
+    console.log('✅ Transaction added:', newTx);
+    
+    setAllTransactions(prev => prev.map(tx => tx.id === tempId ? { ...newTx, id: newTx.id || newTx._id } : tx));
+    toast.success('Transaction added');
+  } catch (e) {
+    console.error('❌ Failed to add transaction:', e);
+    setAllTransactions(prev => prev.filter(tx => tx.id !== tempId));
+    toast.error('Failed to add transaction');
+  }
+};
 
   const editTransaction = async (id: string, data: Omit<Transaction, 'id' | 'user_id'>) => {
     try {

@@ -55,14 +55,14 @@ export default function Login() {
     },
     TA: {
       signTitle: 'எலைட் குழுவில் இணையுங்கள்', loginTitle: 'மீண்டும் வரவேற்கிறோம்',
-      signDesc: 'உங்கள் நிதிப் பயணத்தை இன்றே தொடங்குங்கள்.', loginDesc: 'உள்ளே செல்ல விவரங்களை உள்ளிடுக.',
+      signDesc: 'உங்கள் நிதிப் பயணத்தை இன்றே தொடங்குங்கள்.', loginDesc: 'உள்ளே செல்ல விவரங்களை உள்ளிடவும்.',
       name: 'முழு பெயர்', email: 'மின்னஞ்சல் முகவரி', pass: 'கடவுச்சொல்',
       forgot: 'கடவுச்சொல் மறந்துவிட்டதா?', btnSign: 'கணக்கை உருவாக்கு', btnLogin: 'உள்நுழைக',
       switchSign: 'கணக்கில் உள்நுழைய', switchLogin: 'இலவச கணக்கை உருவாக்கு'
     },
     HI: {
       signTitle: 'हमारे साथ जुड़ें', loginTitle: 'वापसी पर स्वागत है',
-      signDesc: 'आज ही अपनी वित्तीय यात्रा शुरू करें।', loginDesc: 'अपने वॉल्ट तक पहुंचने के लिए क्रेडेंशियल्स दर्ज करें।',
+      signDesc: 'आज ही अपनी वित्तीय यात्रा शुरू करें।', loginDesc: 'अपने वॉल्ट तक पहुंचने के लिए क्रेडेंशियल दर्ज करें।',
       name: 'पूरा नाम', email: 'ईमेल पता', pass: 'पासवर्ड',
       forgot: 'पासवर्ड भूल गए?', btnSign: 'खाता बनाएं', btnLogin: 'लॉग इन करें',
       switchSign: 'खाते में लॉग इन करें', switchLogin: 'मुफ़्त खाता बनाएँ'
@@ -95,6 +95,10 @@ export default function Login() {
   }, []);
 
   const triggerSuccess = (token: string, name: string) => {
+    // ✅ FIX: Store token BEFORE triggering login
+    localStorage.setItem('token', token);
+    localStorage.setItem('user_name', name);
+    
     setShowCelebration(true);
     setTimeout(() => {
       login(token, name);
@@ -154,32 +158,45 @@ export default function Login() {
 
     setLoading(true);
     try {
+      // ✅ FIX: Clear stale tokens BEFORE attempting auth
+      localStorage.removeItem('token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('user_name');
+      
       let res;
       
       if (isSignUp) {
         // ✅ Signup request
+        console.log('📝 Attempting signup with:', formData.email);
         res = await endpoints.signup({
           name: formData.name.trim(),
           email: formData.email.trim().toLowerCase(),
           password: formData.password,
         });
         
+        console.log('✅ Signup successful:', res.data);
         if (res.data?.access_token) {
           triggerSuccess(res.data.access_token, res.data.user_name || formData.name || 'User');
         }
       } else {
         // ✅ Login request
+        console.log('🔐 Attempting login with:', formData.email);
         res = await endpoints.login({
           email: formData.email.trim().toLowerCase(),
           password: formData.password,
         });
         
+        console.log('✅ Login successful:', res.data);
         if (res.data?.access_token) {
           triggerSuccess(res.data.access_token, res.data.user_name || 'User');
         }
       }
     } catch (error: any) {
-      console.error("Auth error:", error);
+      console.error("❌ Auth error:", error);
+
+      // ✅ Clear tokens on error
+      localStorage.removeItem('token');
+      localStorage.removeItem('refresh_token');
 
       // ✅ Extract error message properly
       const errorMessage = getErrorMessage(error);
@@ -267,7 +284,7 @@ export default function Login() {
         <FloatingBlob className="bg-blue-500 w-96 h-96 top-0 -left-20 animation-delay-2000" />
         <FloatingBlob className="bg-purple-500 w-96 h-96 bottom-0 -right-20 animation-delay-4000" />
 
-        <div className="w-full max-w-[420px] relative z-10 backdrop-blur-xl bg-white/80 dark:bg-black/60 border border-white/20 dark:border-white/10 p-8 rounded-[40px] shadow-2xl shadow-blue-500/10">
+        <div className="w-full max-w-[420px] relative z-10 backdrop-blur-xl bg-white/80 dark:bg-black/60 border border-white/20 dark:border-white/10 p-8 rounded-[40px] shadow-2xl shadow-blue-500/20">
           
           <div className="text-center space-y-3 mb-8">
             <h2 className="text-3xl font-extrabold tracking-tight text-foreground">
@@ -425,7 +442,7 @@ export default function Login() {
                 onClick={() => {
                   const subject = encodeURIComponent("Password Recovery Request - RupeeRiser");
                   const body = encodeURIComponent(
-                    "Hello RupeeRiser Support,\n\nI have forgotten my password and would like to request a password reset/recovery.\n\nMy Account Email: [TYPE YOUR EMAIL HERE]\nMy Name: [TYPE YOUR NAME HERE]\n\nPlease let me know the next steps.\n\nThank you!"
+                    "Hello RupeeRiser Support,\n\nI have forgotten my password and would like to request a password reset/recovery.\n\nMy Account Email: [TYPE YOUR EMAIL HERE]\nMy Name: [TYPE YOUR NAME HERE]\n\nThank you!"
                   );
                   window.open(`mailto:raptiledataworks@gmail.com?subject=${subject}&body=${body}`);
                   setShowForgotModal(false);
