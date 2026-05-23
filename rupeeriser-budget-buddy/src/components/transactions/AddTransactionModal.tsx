@@ -23,15 +23,15 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
   const [isParsing, setIsParsing] = useState(false);
   const [naturalInput, setNaturalInput] = useState('');
 
-  // 1. Determine available accounts
-  const availableAccounts = budget.accounts.length > 0 
+  // ✅ FIXED: Ensure accounts is always an array
+  const availableAccounts = Array.isArray(budget?.accounts) && budget.accounts.length > 0 
     ? budget.accounts 
     : [{ id: 'default', name: 'Cash', type: 'cash', balance: 0 }];
 
   // 2. Helper to get a valid default account string
   const getDefaultAccount = () => {
     if (activeAccount !== 'all' && activeAccount) return activeAccount;
-    return availableAccounts[0].name;
+    return availableAccounts[0]?.name || 'Cash';
   };
 
   const [formData, setFormData] = useState({
@@ -51,7 +51,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
           note: transactionToEdit.note,
           amount: transactionToEdit.amount.toString(),
           category: transactionToEdit.category,
-          account: transactionToEdit.account,
+          account: transactionToEdit.account || getDefaultAccount(),
           type: transactionToEdit.type,
           date: transactionToEdit.date,
         });
@@ -67,7 +67,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
         setNaturalInput('');
       }
     }
-  }, [isOpen, transactionToEdit, budget.accounts]); // Added budget.accounts dependency
+  }, [isOpen, transactionToEdit, availableAccounts]); // Updated dependency
 
   // ✅ VALIDATION & SUBMIT
   const handleSubmit = async (e: React.FormEvent) => {
@@ -114,8 +114,9 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
       // Check if AI's suggested account exists in our list (case-insensitive)
       let matchedAccount = getDefaultAccount(); // Default fallback
       
-      if (data.account) {
-          const found = budget.accounts.find(
+      // ✅ FIXED: Check if availableAccounts is array before using .find()
+      if (data.account && Array.isArray(availableAccounts)) {
+          const found = availableAccounts.find(
               acc => acc.name.toLowerCase() === data.account.toLowerCase()
           );
           if (found) matchedAccount = found.name;
@@ -188,18 +189,24 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
                 <Label className="text-xs">Account</Label>
                 <Select value={formData.account} onValueChange={(v) => setFormData({ ...formData, account: v })}>
                   <SelectTrigger className="input-glass mt-1 h-10 text-sm"><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{availableAccounts.map((acc, idx) => <SelectItem key={`${acc.id}-${idx}`} value={acc.name}>{acc.name}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {availableAccounts.map((acc, idx) => (
+                      <SelectItem key={`${acc.id}-${idx}`} value={acc.name}>{acc.name}</SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
 
             <div className="flex gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setFormData({ ...formData, type: 'expense' })} 
-                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'expense' ? 'bg-red-500 text-white hover:bg-red-600 border-red-500' : 'text-muted-foreground'}`}>
+                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'expense' ? 'bg-red-500 text-white hover:bg-red-600 border-red-500' : 'text-muted-foreground hover:text-foreground'}`}
+              >
                 Expense
               </Button>
               <Button type="button" variant="outline" onClick={() => setFormData({ ...formData, type: 'income' })}
-                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'income' ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600' : 'text-muted-foreground'}`}>
+                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'income' ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600' : 'text-muted-foreground hover:text-foreground'}`}
+              >
                 Income
               </Button>
             </div>

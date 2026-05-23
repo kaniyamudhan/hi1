@@ -93,8 +93,9 @@ export default function Habits() {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
+      // ✅ FIXED: Check if habit.completed_dates exists and is an array before using .includes()
       const count = habits.filter((h) =>
-        h.completed_dates.includes(dateStr)
+        Array.isArray(h.completed_dates) && h.completed_dates.includes(dateStr)
       ).length;
       data.push({
         name: d.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -179,10 +180,11 @@ export default function Habits() {
                     <td className="p-3 font-medium truncate text-foreground">{habit.name}</td>
                     {weekDates.map((d) => {
                       const dateStr = d.toISOString().split('T')[0];
-                      const done = habit.completed_dates.includes(dateStr);
+                      // ✅ FIXED: Check if habit.completed_dates exists before calling .includes()
+                      const done = Array.isArray(habit.completed_dates) && habit.completed_dates.includes(dateStr);
                       return (
                         <td key={dateStr} className="p-2 text-center">
-                          <button onClick={() => toggleHabitCheck(habit.id, dateStr, !done)} className={cn('w-8 h-8 rounded-lg mx-auto flex items-center justify-center transition-all', done ? 'bg-blue-600 text-white shadow-md' : 'bg-secondary hover:bg-secondary/80 text-muted-foreground')}>
+                          <button onClick={() => toggleHabitCheck(habit.id, dateStr, !done)} className={cn('w-8 h-8 rounded-lg mx-auto flex items-center justify-center transition-all', done ? 'bg-blue-600 text-white' : 'bg-secondary hover:bg-secondary/80')}>
                             {done && <Check className="w-5 h-5" />}
                           </button>
                         </td>
@@ -227,10 +229,11 @@ export default function Habits() {
                         </div>
                         {weekDates.map((dateObj) => {
                             const dateStr = dateObj.toISOString().split('T')[0];
-                            const isDone = habit.completed_dates.includes(dateStr);
+                            // ✅ FIXED: Check if habit.completed_dates exists before calling .includes()
+                            const isDone = Array.isArray(habit.completed_dates) && habit.completed_dates.includes(dateStr);
                             return (
                                 <div key={dateStr} className="flex justify-center">
-                                    <button onClick={() => toggleHabitCheck(habit.id, dateStr, !isDone)} className={cn("w-6 h-6 rounded-full flex items-center justify-center transition-all border", isDone ? "bg-blue-600 border-blue-600 text-white" : "bg-transparent border-border hover:bg-muted")}>
+                                    <button onClick={() => toggleHabitCheck(habit.id, dateStr, !isDone)} className={cn("w-6 h-6 rounded-full flex items-center justify-center transition-all border", isDone ? "bg-blue-600 text-white border-blue-600" : "border-border hover:bg-secondary")}>
                                         {isDone && <Check className="w-3.5 h-3.5" />}
                                     </button>
                                 </div>

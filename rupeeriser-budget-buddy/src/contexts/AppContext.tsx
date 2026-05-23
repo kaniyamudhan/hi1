@@ -93,7 +93,8 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   const transactions = useMemo(() => {
     if (activeAccount === 'all') return allTransactions;
-    return allTransactions.filter(t => t.account.toLowerCase() === activeAccount.toLowerCase());
+    // ✅ FIXED: Check if t.account exists before calling toLowerCase()
+    return allTransactions.filter(t => t.account && t.account.toLowerCase() === activeAccount.toLowerCase());
   }, [allTransactions, activeAccount]);
 
   useEffect(() => {
@@ -124,16 +125,20 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       const formattedTx = txData.map((t: any) => ({...t, id: t.id || t._id}));
       setAllTransactions(formattedTx);
 
+      // ✅ FIXED: Ensure accounts and goals are always arrays
+      const accountsData = Array.isArray(accRes.data) ? accRes.data : [];
+      const goalsData = Array.isArray(goalRes.data) ? goalRes.data : [];
+
       setBudget(prev => ({
         ...prev,
         salary: budgetRes.data.salary || 0,
         fixedCosts: budgetRes.data.fixed_costs || { rent: 0, travel: 0, phone: 0, subscriptions: 0 },
         config: budgetRes.data.config || "",
-        accounts: accRes.data,
-        goals: goalRes.data,
+        accounts: accountsData,
+        goals: goalsData,
       }));
       
-      setHabits(habitRes.data);
+      setHabits(Array.isArray(habitRes.data) ? habitRes.data : []);
     } catch (error) {
       console.error("Failed to fetch data", error);
     } finally {
@@ -249,7 +254,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const res = await endpoints.createAccount(data);
       const newAcc = res.data;
-      setBudget(prev => ({ ...prev, accounts: [...prev.accounts, newAcc] }));
+      // ✅ FIXED: Ensure accounts is always an array before spreading
+      setBudget(prev => ({ 
+        ...prev, 
+        accounts: Array.isArray(prev.accounts) ? [...prev.accounts, newAcc] : [newAcc]
+      }));
       toast.success('Account created');
     } catch (e) { toast.error('Failed to create account'); }
   };
@@ -257,7 +266,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const deleteAccount = async (id: string) => {
     try {
       await endpoints.deleteAccount(id);
-      setBudget(prev => ({ ...prev, accounts: prev.accounts.filter(acc => acc.id !== id) }));
+      // ✅ FIXED: Ensure accounts is always an array before filtering
+      setBudget(prev => ({ 
+        ...prev, 
+        accounts: Array.isArray(prev.accounts) ? prev.accounts.filter(acc => acc.id !== id) : []
+      }));
       if (activeAccount === id) setActiveAccount('all');
       toast.success('Account deleted');
     } catch (e) { toast.error('Failed to delete account'); }
@@ -267,7 +280,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const res = await endpoints.createGoal(data);
       const newGoal = res.data;
-      setBudget(prev => ({ ...prev, goals: [...prev.goals, newGoal] }));
+      // ✅ FIXED: Ensure goals is always an array before spreading
+      setBudget(prev => ({ 
+        ...prev, 
+        goals: Array.isArray(prev.goals) ? [...prev.goals, newGoal] : [newGoal]
+      }));
       toast.success('Goal added');
     } catch (e) { toast.error('Failed to add goal'); }
   };
@@ -275,7 +292,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const deleteGoal = async (id: string) => {
     try {
       await endpoints.deleteGoal(id);
-      setBudget(prev => ({ ...prev, goals: prev.goals.filter(g => g.id !== id) }));
+      // ✅ FIXED: Ensure goals is always an array before filtering
+      setBudget(prev => ({ 
+        ...prev, 
+        goals: Array.isArray(prev.goals) ? prev.goals.filter(g => g.id !== id) : []
+      }));
       toast.success('Goal deleted');
     } catch (e) { toast.error('Failed to delete goal'); }
   };
