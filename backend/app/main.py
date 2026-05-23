@@ -3,6 +3,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from slowapi import Limiter
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
@@ -21,6 +22,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="RupeeRiser API", version="1.0.0")
+
+# ============================================================================
+# CUSTOM ERROR HANDLER FOR VALIDATION ERRORS
+# ============================================================================
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert Pydantic validation errors to user-friendly format."""
+    errors = {}
+    for error in exc.errors():
+        field = ".".join(str(x) for x in error["loc"][1:])  # Skip "body"
+        message = error["msg"]
+        errors[field] = message
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "error": {
+                "message": "Validation failed",
+                "details": errors
+            }
+        }
+    )
 
 # ============================================================================
 # Rate Limiter Setup

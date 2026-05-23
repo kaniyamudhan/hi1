@@ -1,9 +1,6 @@
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`;
-// const API_URL = import.meta.env.VITE_API_URL || "http://192.168.1.59:8000";
-// const API_URL = import.meta.env.VITE_API_URL || "http://192.168.29.72:8000";
-
 
 const api = axios.create({
   baseURL: API_URL,
@@ -26,12 +23,43 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       if (localStorage.getItem('token')) {
         localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
         window.location.href = '/login';
       }
     }
     return Promise.reject(error);
   }
 );
+
+// ✅ Helper to extract error messages from backend response
+export const getErrorMessage = (error: any): string => {
+  // Handle validation errors with details
+  if (error.response?.data?.error?.details) {
+    const details = error.response.data.error.details;
+    const messages = Object.values(details)
+      .filter((msg) => msg)
+      .map((msg) => String(msg));
+    return messages.join(", ") || "Validation error";
+  }
+
+  // Handle single error message
+  if (error.response?.data?.error?.message) {
+    return error.response.data.error.message;
+  }
+
+  // Handle Pydantic default format
+  if (error.response?.data?.detail) {
+    if (Array.isArray(error.response.data.detail)) {
+      return error.response.data.detail
+        .map((e: any) => e.msg || String(e))
+        .join(", ");
+    }
+    return error.response.data.detail;
+  }
+
+  // Default message
+  return "Something went wrong";
+};
 
 export const endpoints = {
   // Auth
@@ -46,18 +74,19 @@ export const endpoints = {
   getTransactions: () => api.get('/transactions/'),
   addTransaction: (data: any) => api.post('/transactions/', data),
   deleteTransaction: (id: string) => api.delete(`/transactions/${id}`),
-  updateTransaction: (id: string, data: any) => api.put(`/transactions/${id}`, data),
-  
+  updateTransaction: (id: string, data: any) =>
+    api.put(`/transactions/${id}`, data),
+
   // Accounts
   getAccounts: () => api.get('/accounts/'),
   createAccount: (data: any) => api.post('/accounts/', data),
   deleteAccount: (id: string) => api.delete(`/accounts/${id}`),
-  
+
   // Goals
   getGoals: () => api.get('/goals/'),
   createGoal: (data: any) => api.post('/goals/', data),
   deleteGoal: (id: string) => api.delete(`/goals/${id}`),
-  
+
   // Budget Settings
   getBudgetSettings: () => api.get('/budget/'),
   updateBudgetSettings: (data: any) => api.put('/budget/', data),
@@ -65,20 +94,22 @@ export const endpoints = {
   // Habits
   getHabits: () => api.get('/habits/'),
   createHabit: (name: string) => api.post('/habits/', { name }),
-  // ✅ FIX: Use the generic update endpoint, passing the full object logic is handled in Context
-  updateHabit: (id: string, data: any) => api.put(`/habits/${id}`, data), 
+  updateHabit: (id: string, data: any) => api.put(`/habits/${id}`, data),
   deleteHabit: (id: string) => api.delete(`/habits/${id}`),
   seedHabits: () => api.post('/habits/seed'),
 
   // AI (Parse Only)
   parseAI: (text: string) => api.post('/ai/parse', { text }),
-  chatAI: (message: string, context?: string) => api.post('/ai/chat', { message, context }),
+  chatAI: (message: string, context?: string) =>
+    api.post('/ai/chat', { message, context }),
 
   // Admin
   getAdminUsers: () => api.get('/admin/users'),
-  getAdminUserData: (userId: string) => api.get(`/admin/users/${userId}/data`),
+  getAdminUserData: (userId: string) =>
+    api.get(`/admin/users/${userId}/data`),
   deleteAdminUser: (userId: string) => api.delete(`/admin/users/${userId}`),
-  updateAdminUserPassword: (userId: string, new_password: string) => api.put(`/admin/users/${userId}/password`, { new_password }),
+  updateAdminUserPassword: (userId: string, new_password: string) =>
+    api.put(`/admin/users/${userId}/password`, { new_password }),
   adminCreateUser: (data: any) => api.post('/admin/users', data),
 };
 

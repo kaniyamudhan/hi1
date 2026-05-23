@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import api, { endpoints } from '@/lib/api';
+import api, { endpoints, getErrorMessage } from '@/lib/api';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -68,9 +68,9 @@ export default function Login() {
       switchSign: 'खाते में लॉग इन करें', switchLogin: 'मुफ़्त खाता बनाएँ'
     }
   }[language];
+
   // Data States
   const [formData, setFormData] = useState({ name: '', email: '', password: '' });
-
   const [loading, setLoading] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
 
@@ -103,25 +103,103 @@ export default function Login() {
     }, 2000);
   };
 
+  const validateForm = (): boolean => {
+    // Validate name if signup
+    if (isSignUp) {
+      if (!formData.name.trim()) {
+        toast.error("Name is required");
+        return false;
+      }
+      if (formData.name.trim().length < 2) {
+        toast.error("Name must be at least 2 characters");
+        return false;
+      }
+    }
+
+    // Validate email
+    if (!formData.email.trim()) {
+      toast.error("Email is required");
+      return false;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      toast.error("Please enter a valid email address");
+      return false;
+    }
+
+    // Validate password
+    if (!formData.password) {
+      toast.error("Password is required");
+      return false;
+    }
+    if (formData.password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return false;
+    }
+    if (formData.password.length > 72) {
+      toast.error("Password is too long (max 72 characters)");
+      return false;
+    }
+
+    return true;
+  };
+
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate form first
+    if (!validateForm()) {
+      return;
+    }
+
     setLoading(true);
     try {
       let res;
+      
       if (isSignUp) {
-        res = await endpoints.signup(formData);
-        toast.success("Account created successfully!");
+        // ✅ Signup request
+        res = await endpoints.signup({
+          name: formData.name.trim(),
+          email: formData.email.trim().toLowerCase(),
+          password: formData.password,
+        });
+        
+        if (res.data?.access_token) {
+          triggerSuccess(res.data.access_token, res.data.user_name || formData.name || 'User');
+        }
       } else {
-        res = await endpoints.login({ email: formData.email, password: formData.password });
-      }
-      if (res.data.access_token) {
-        triggerSuccess(res.data.access_token, res.data.user_name || formData.name || 'User');
+        // ✅ Login request
+        res = await endpoints.login({
+          email: formData.email.trim().toLowerCase(),
+          password: formData.password,
+        });
+        
+        if (res.data?.access_token) {
+          triggerSuccess(res.data.access_token, res.data.user_name || 'User');
+        }
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || "Something went wrong");
+      console.error("Auth error:", error);
+
+      // ✅ Extract error message properly
+      const errorMessage = getErrorMessage(error);
+      toast.error(errorMessage);
     } finally {
-      setLoading(false); 
+      setLoading(false);
     }
+  };
+
+  const handleInputChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const resetForm = () => {
+    setFormData({ name: '', email: '', password: '' });
+  };
+
+  const handleToggleMode = () => {
+    resetForm();
+    setIsSignUp(!isSignUp);
   };
 
   return (
@@ -131,7 +209,10 @@ export default function Login() {
       {/* --- DESKTOP LEFT SIDE --- */}
       <div className="hidden lg:flex w-1/2 bg-black relative flex-col justify-between p-12 text-white overflow-hidden">
         <div className="absolute inset-0 opacity-60 bg-cover bg-center transition-transform hover:scale-110"
-          style={{ backgroundImage: `url('https://images.unsplash.com/photo-1611974765270-ca12586343bb?q=80&w=2070&auto=format&fit=crop')`, transitionDuration: '20s'}} />
+          style={{
+            backgroundImage: `url('https://images.unsplash.com/photo-1611974765270-ca12586343bb?q=80&w=2070&auto=format&fit=crop')`,
+            transitionDuration: '20s'
+          }} />
         <div className="absolute inset-0 bg-gradient-to-tr from-blue-900/80 via-black/60 to-black/40" />
 
         <div className="relative z-10 flex items-center gap-3">
@@ -145,8 +226,13 @@ export default function Login() {
 
         <div className="relative z-10 space-y-8 max-w-lg">
           <div className="space-y-4">
-            <h1 className="text-5xl font-bold leading-tight">Master your money. <br/><span className="text-blue-400">Design your future.</span></h1>
-            <p className="text-lg text-gray-300 leading-relaxed">Experience the next generation of financial tracking. AI-powered insights, seamless syncing, and total control.</p>
+            <h1 className="text-5xl font-bold leading-tight">
+              Master your money. <br/>
+              <span className="text-blue-400">Design your future.</span>
+            </h1>
+            <p className="text-lg text-gray-300 leading-relaxed">
+              Experience the next generation of financial tracking. AI-powered insights, seamless syncing, and total control.
+            </p>
           </div>
           
           <div className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md">
@@ -166,16 +252,16 @@ export default function Login() {
       
         {/* Language Switcher */}
         <div className="absolute top-6 right-6 z-50 flex gap-2 items-center bg-secondary/50 backdrop-blur-md rounded-2xl p-1 px-3 border border-border shadow-sm">
-           <Globe className="w-4 h-4 text-muted-foreground delay-75 transition-all" />
-           <select 
-             className="bg-transparent text-foreground text-sm font-semibold py-2 outline-none cursor-pointer"
-             value={language}
-             onChange={(e: any) => setLanguage(e.target.value)}
-           >
-             <option className="bg-background text-foreground" value="EN">English</option>
-             <option className="bg-background text-foreground" value="TA">தமிழ் (Tamil)</option>
-             <option className="bg-background text-foreground" value="HI">हिन्दी (Hindi)</option>
-           </select>
+          <Globe className="w-4 h-4 text-muted-foreground delay-75 transition-all" />
+          <select 
+            className="bg-transparent text-foreground text-sm font-semibold py-2 outline-none cursor-pointer"
+            value={language}
+            onChange={(e: any) => setLanguage(e.target.value)}
+          >
+            <option className="bg-background text-foreground" value="EN">English</option>
+            <option className="bg-background text-foreground" value="TA">தமிழ் (Tamil)</option>
+            <option className="bg-background text-foreground" value="HI">हिन्दी (Hindi)</option>
+          </select>
         </div>
 
         <FloatingBlob className="bg-blue-500 w-96 h-96 top-0 -left-20 animation-delay-2000" />
@@ -196,16 +282,41 @@ export default function Login() {
             {isSignUp && (
               <div className="relative group">
                 <User className="absolute left-4 top-3.5 h-5 w-5 text-muted-foreground" />
-                <Input placeholder={t.name} value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} required className="pl-12 h-12 rounded-2xl" />
+                <Input 
+                  placeholder={t.name} 
+                  value={formData.name} 
+                  onChange={e => handleInputChange('name', e.target.value)}
+                  disabled={loading}
+                  required 
+                  className="pl-12 h-12 rounded-2xl" 
+                />
               </div>
             )}
+
             <div className="relative group">
               <Mail className="absolute left-4 top-3.5 h-5 w-5 text-muted-foreground" />
-              <Input type="email" placeholder={t.email} value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} required className="pl-12 h-12 rounded-2xl" />
+              <Input 
+                type="email" 
+                placeholder={t.email} 
+                value={formData.email} 
+                onChange={e => handleInputChange('email', e.target.value)}
+                disabled={loading}
+                required 
+                className="pl-12 h-12 rounded-2xl" 
+              />
             </div>
+
             <div className="relative group">
               <Lock className="absolute left-4 top-3.5 h-5 w-5 text-muted-foreground" />
-              <Input type="password" placeholder={t.pass} value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required className="pl-12 h-12 rounded-2xl" />
+              <Input 
+                type="password" 
+                placeholder={t.pass} 
+                value={formData.password} 
+                onChange={e => handleInputChange('password', e.target.value)}
+                disabled={loading}
+                required 
+                className="pl-12 h-12 rounded-2xl" 
+              />
             </div>
             
             {!isSignUp && (
@@ -213,21 +324,37 @@ export default function Login() {
                 <button 
                   type="button"
                   onClick={() => setShowForgotModal(true)}
-                  className="text-xs font-semibold text-blue-600 hover:underline"
+                  disabled={loading}
+                  className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50"
                 >
                   {t.forgot}
                 </button>
               </div>
             )}
 
-            <Button type="submit" disabled={loading} className="w-full h-14 mt-4 rounded-2xl font-bold text-lg bg-blue-600 hover:bg-blue-700 transition">
-                {loading ? <Loader2 className="w-5 h-5 animate-spin"/> : (isSignUp ? t.btnSign : t.btnLogin)}
+            <Button 
+              type="submit" 
+              disabled={loading} 
+              className="w-full h-14 mt-4 rounded-2xl font-bold text-lg bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                  {isSignUp ? t.btnSign : t.btnLogin}
+                </>
+              ) : (
+                isSignUp ? t.btnSign : t.btnLogin
+              )}
             </Button>
           </form>
 
           {/* Toggle */}
           <div className="mt-8 text-center pt-6 border-t border-border">
-            <button onClick={() => setIsSignUp(!isSignUp)} className="text-blue-600 font-bold hover:underline">
+            <button 
+              onClick={handleToggleMode}
+              disabled={loading}
+              className="text-blue-600 font-bold hover:underline disabled:opacity-50"
+            >
               {isSignUp ? t.switchSign : t.switchLogin}
             </button>
           </div>
@@ -239,10 +366,16 @@ export default function Login() {
       {showForgotModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
           <div className="bg-card w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-border flex flex-col scale-in">
+            
             {/* Header */}
             <div className="bg-secondary/50 p-4 flex items-center justify-between border-b">
               <h3 className="font-bold text-lg">Password Recovery</h3>
-              <Button variant="ghost" size="icon" onClick={() => setShowForgotModal(false)} className="rounded-full h-8 w-8 text-muted-foreground hover:bg-muted">
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setShowForgotModal(false)} 
+                className="rounded-full h-8 w-8 text-muted-foreground hover:bg-muted"
+              >
                 <X className="w-5 h-5" />
               </Button>
             </div>
@@ -252,12 +385,15 @@ export default function Login() {
               <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-2xl mx-auto flex items-center justify-center text-blue-600 mb-2 shadow-sm">
                 <MailIcon className="w-8 h-8" />
               </div>
+              
               <p className="text-muted-foreground text-sm leading-relaxed">
                 If you have forgotten your password, please contact support directly. Send an email to the address below.
               </p>
               
               <div className="flex items-center justify-between p-3 bg-secondary/30 border border-border rounded-xl">
-                <span className="font-mono text-sm font-semibold text-foreground select-all">raptiledataworks@gmail.com</span>
+                <span className="font-mono text-sm font-semibold text-foreground select-all">
+                  raptiledataworks@gmail.com
+                </span>
                 <Button 
                   size="icon" 
                   variant="ghost" 
@@ -270,6 +406,7 @@ export default function Login() {
                   <Copy className="w-4 h-4 text-muted-foreground" />
                 </Button>
               </div>
+
               <p className="text-xs text-muted-foreground mt-2">
                 Our team will help you recover your account within 1–2 business days.
               </p>
@@ -277,14 +414,21 @@ export default function Login() {
 
             {/* Footer */}
             <div className="p-4 bg-secondary/20 flex gap-2 justify-end border-t">
-              <Button variant="outline" onClick={() => setShowForgotModal(false)} className="rounded-xl">
+              <Button 
+                variant="outline" 
+                onClick={() => setShowForgotModal(false)} 
+                className="rounded-xl"
+              >
                 Cancel
               </Button>
               <Button 
                 onClick={() => {
                   const subject = encodeURIComponent("Password Recovery Request - RupeeRiser");
-                  const body = encodeURIComponent("Hello RupeeRiser Support,\n\nI have forgotten my password and would like to request a password reset/recovery.\n\nMy Account Email: [TYPE YOUR EMAIL HERE]\nMy Name: [TYPE YOUR NAME HERE]\n\nPlease let me know the next steps.\n\nThank you!");
+                  const body = encodeURIComponent(
+                    "Hello RupeeRiser Support,\n\nI have forgotten my password and would like to request a password reset/recovery.\n\nMy Account Email: [TYPE YOUR EMAIL HERE]\nMy Name: [TYPE YOUR NAME HERE]\n\nPlease let me know the next steps.\n\nThank you!"
+                  );
                   window.open(`mailto:raptiledataworks@gmail.com?subject=${subject}&body=${body}`);
+                  setShowForgotModal(false);
                 }} 
                 className="rounded-xl bg-blue-600 hover:bg-blue-700"
               >

@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, EmailStr
 import logging
+import traceback
 
 from app.config import settings
 from app import database
@@ -67,19 +68,28 @@ async def signup(user: UserCreate, request: Request):
     
     try:
         # Check if email already exists
-        existing = await database.users_collection.find_one({"email": user.email})
+        existing = await database.users_collection.find_one({"email": user.email.lower()})
         if existing:
             logger.warning(f"⚠️ Signup attempted with existing email: {user.email}")
             raise ValidationError("Email already registered")
         
+        # Validate password length is within bcrypt limit BEFORE hashing
+        if len(user.password.encode('utf-8')) > 72:
+            logger.warning(f"⚠️ Password too long for user: {user.email}")
+            raise ValidationError("Password cannot exceed 72 characters")
+        
         # Hash password (ONLY hash - NO plain-text storage)
-        hashed_pw = get_password_hash(user.password)
+        try:
+            hashed_pw = get_password_hash(user.password)
+        except ValueError as ve:
+            logger.error(f"❌ Password hashing failed: {str(ve)}")
+            raise ValidationError(str(ve))
         
         # Create user document
         user_doc = {
-            "name": user.name,
-            "email": user.email,
-            "hashed_password": hashed_pw,  # ✅ ONLY hashed password
+            "name": user.name.strip(),
+            "email": user.email.lower(),
+            "hashed_password": hashed_pw,
             "is_verified": False,
             "phone": "",
             "dob": "",
@@ -95,10 +105,10 @@ async def signup(user: UserCreate, request: Request):
         result = await database.users_collection.insert_one(user_doc)
         
         # Create tokens
-        access_token = create_access_token(data={"sub": user.email})
-        refresh_token = create_refresh_token(data={"sub": user.email})
+        access_token = create_access_token(data={"sub": user.email.lower()})
+        refresh_token = create_refresh_token(data={"sub": user.email.lower()})
         
-        logger.info(f"✅ User registered: {user.email}")
+        logger.info(f"✅ User registered successfully: {user.email}")
         
         return TokenResponse(
             access_token=access_token,
@@ -111,7 +121,8 @@ async def signup(user: UserCreate, request: Request):
         raise
     except Exception as e:
         logger.error(f"❌ Signup error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Registration failed")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Registration failed. Please try again.")
 
 
 # ============================================================================
@@ -127,8 +138,8 @@ async def login(user_data: UserLogin, request: Request):
         raise HTTPException(status_code=500, detail="Database connection failed")
     
     try:
-        # Find user by email
-        user = await database.users_collection.find_one({"email": user_data.email})
+        # Find user by email (case-insensitive)
+        user = await database.users_collection.find_one({"email": user_data.email.lower()})
         if not user:
             logger.warning(f"⚠️ Login attempt with non-existent email: {user_data.email}")
             raise AuthenticationError("Invalid email or password")
@@ -161,6 +172,7 @@ async def login(user_data: UserLogin, request: Request):
         raise
     except Exception as e:
         logger.error(f"❌ Login error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Login failed")
 
 
@@ -199,6 +211,7 @@ async def refresh_access_token(request: RefreshTokenRequest):
         raise
     except Exception as e:
         logger.error(f"❌ Token refresh error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise AuthenticationError("Invalid or expired refresh token")
 
 
@@ -210,23 +223,52 @@ async def refresh_access_token(request: RefreshTokenRequest):
 async def get_me(current_user: dict = Depends(get_current_user)):
     """Get current authenticated user profile."""
     
+    logger.info(f"📍 GET /me endpoint called with current_user: {current_user}")
+    
     if database.users_collection is None:
+        logger.error("❌ Database error - users_collection is None")
         raise HTTPException(status_code=500, detail="Database error")
     
     try:
-        user = await database.users_collection.find_one({"_id": current_user["_id"]})
+        # ✅ FIX: current_user already has the user data from get_current_user
+        # But we need to fetch fresh data from DB to get all fields
+        email = current_user.get("email")
+        
+        logger.info(f"📍 Extracted email from token: {email}")
+        
+        if not email:
+            logger.error(f"❌ No email in token payload. current_user keys: {current_user.keys()}")
+            raise HTTPException(status_code=401, detail="Invalid token - no email found")
+        
+        # Fetch from database using email (safer than _id)
+        logger.info(f"📍 Fetching user from DB with email: {email}")
+        user = await database.users_collection.find_one({"email": email})
+        
         if not user:
-            raise AuthenticationError("User not found")
+            logger.warning(f"⚠️ User not found in DB: {email}")
+            raise HTTPException(status_code=404, detail="User not found in database")
+        
+        logger.info(f"✅ User found in DB: {email}")
         
         # Remove sensitive fields
-        user.pop("_id", None)
         user.pop("hashed_password", None)
+        
+        # Convert MongoDB ObjectId to string
+        if "_id" in user:
+            user["_id"] = str(user["_id"])
+        
+        logger.info(f"✅ Returning user profile for: {email}")
         
         return user
     
+    except HTTPException as he:
+        logger.error(f"❌ HTTPException in /me: {he.detail}")
+        raise
     except Exception as e:
         logger.error(f"❌ Get user error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to fetch user")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to fetch user: {str(e)}")
 
 
 # ============================================================================
@@ -241,20 +283,30 @@ async def update_profile(data: UserUpdate, current_user: dict = Depends(get_curr
         raise HTTPException(status_code=500, detail="Database error")
     
     try:
+        email = current_user.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
         update_data = data.dict(exclude_unset=True)
         update_data["updated_at"] = datetime.utcnow()
         
-        await database.users_collection.update_one(
-            {"_id": current_user["_id"]},
+        result = await database.users_collection.update_one(
+            {"email": email},
             {"$set": update_data}
         )
         
-        logger.info(f"✅ Profile updated for: {current_user['email']}")
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        logger.info(f"✅ Profile updated for: {email}")
         
         return {"message": "Profile updated successfully"}
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Profile update error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to update profile")
 
 
@@ -270,33 +322,50 @@ async def change_password(data: PasswordUpdate, current_user: dict = Depends(get
         raise HTTPException(status_code=500, detail="Database error")
     
     try:
+        email = current_user.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
         # Fetch user
-        user = await database.users_collection.find_one({"_id": current_user["_id"]})
+        user = await database.users_collection.find_one({"email": email})
         if not user:
-            raise AuthenticationError("User not found")
+            raise HTTPException(status_code=404, detail="User not found")
         
         # Verify current password
         if not verify_password(data.current_password, user["hashed_password"]):
-            logger.warning(f"⚠️ Failed password change attempt for: {current_user['email']}")
+            logger.warning(f"⚠️ Failed password change attempt for: {email}")
             raise AuthenticationError("Current password is incorrect")
         
+        # Validate new password length
+        if len(data.new_password.encode('utf-8')) > 72:
+            raise ValidationError("New password is too long (max 72 characters)")
+        
         # Hash new password
-        new_hashed = get_password_hash(data.new_password)
+        try:
+            new_hashed = get_password_hash(data.new_password)
+        except ValueError as ve:
+            raise ValidationError(str(ve))
         
         # Update password
-        await database.users_collection.update_one(
-            {"_id": current_user["_id"]},
+        result = await database.users_collection.update_one(
+            {"email": email},
             {"$set": {"hashed_password": new_hashed, "updated_at": datetime.utcnow()}}
         )
         
-        logger.info(f"✅ Password changed for: {current_user['email']}")
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        logger.info(f"✅ Password changed for: {email}")
         
         return {"message": "Password updated successfully"}
     
-    except AuthenticationError:
+    except (AuthenticationError, ValidationError):
+        raise
+    except HTTPException:
         raise
     except Exception as e:
         logger.error(f"❌ Password change error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to change password")
 
 
@@ -312,23 +381,39 @@ async def delete_account(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Database error")
     
     try:
-        user_id = current_user["_id"]
-        email = current_user["email"]
+        email = current_user.get("email")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        # Fetch user to get ID
+        user = await database.users_collection.find_one({"email": email})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_id = str(user["_id"])
         
         # Delete user
-        await database.users_collection.delete_one({"_id": user_id})
+        await database.users_collection.delete_one({"email": email})
         
         # Delete all associated data
-        await database.transactions_collection.delete_many({"user_id": str(user_id)})
-        await database.accounts_collection.delete_many({"user_id": str(user_id)})
-        await database.goals_collection.delete_many({"user_id": str(user_id)})
-        await database.habits_collection.delete_many({"user_id": str(user_id)})
-        await database.budget_settings_collection.delete_many({"user_id": str(user_id)})
+        if database.transactions_collection:
+            await database.transactions_collection.delete_many({"user_id": user_id})
+        if database.accounts_collection:
+            await database.accounts_collection.delete_many({"user_id": user_id})
+        if database.goals_collection:
+            await database.goals_collection.delete_many({"user_id": user_id})
+        if database.habits_collection:
+            await database.habits_collection.delete_many({"user_id": user_id})
+        if database.budget_settings_collection:
+            await database.budget_settings_collection.delete_many({"user_id": user_id})
         
         logger.info(f"✅ Account deleted for: {email}")
         
         return {"message": "Account successfully deleted"}
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Account deletion error: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to delete account")

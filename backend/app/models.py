@@ -1,6 +1,6 @@
 """Pydantic models for request/response validation."""
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List, Literal, Dict, Any
 
 
@@ -13,6 +13,22 @@ class UserCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v):
+        """Ensure password doesn't exceed bcrypt's 72-byte limit."""
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (max 72 characters when encoded)')
+        return v
+    
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        """Ensure name is not empty or just whitespace."""
+        if not v or not v.strip():
+            raise ValueError('Name cannot be empty')
+        return v.strip()
 
 
 class AdminUserCreate(BaseModel):
@@ -20,6 +36,14 @@ class AdminUserCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v):
+        """Ensure password doesn't exceed bcrypt's 72-byte limit."""
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (max 72 characters when encoded)')
+        return v
 
 
 class UserLogin(BaseModel):
@@ -51,6 +75,14 @@ class PasswordChange(BaseModel):
     """Password change request."""
     current_password: str
     new_password: str
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_password_length(cls, v):
+        """Ensure password doesn't exceed bcrypt's 72-byte limit."""
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (max 72 characters when encoded)')
+        return v
 
 
 # ============================================================================
@@ -223,3 +255,11 @@ class PasswordResetConfirm(BaseModel):
     """Password reset confirmation."""
     token: str
     new_password: str = Field(..., min_length=8, max_length=128)
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_password_length(cls, v):
+        """Ensure password doesn't exceed bcrypt's 72-byte limit."""
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError('Password is too long (max 72 characters when encoded)')
+        return v

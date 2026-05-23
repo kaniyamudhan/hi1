@@ -32,7 +32,10 @@ export const AccountSelectionModal = () => {
   };
 
   const handleCreate = async () => {
-    if (!newName) return; // Removed balance check
+    if (!newName) {
+      toast.error("Account name is required");
+      return;
+    }
     try {
       await createAccount({
         name: newName,
@@ -49,6 +52,9 @@ export const AccountSelectionModal = () => {
     }
   };
 
+  // ✅ FIX: Ensure accounts is always an array
+  const accounts = Array.isArray(budget?.accounts) ? budget.accounts : [];
+
   return (
     <Dialog open={isOpen} onOpenChange={() => {}}>
       {/* preventDefault onInteractOutside forces user to choose */}
@@ -63,10 +69,10 @@ export const AccountSelectionModal = () => {
         {!showCreate ? (
           <div className="space-y-4">
             <div className="grid gap-2 max-h-[300px] overflow-y-auto">
-              {budget.accounts.length === 0 && (
+              {accounts.length === 0 && (
                 <p className="text-center text-sm text-muted-foreground py-4">No accounts found.</p>
               )}
-              {budget.accounts.map((acc) => (
+              {accounts.map((acc) => (
                 <Button
                   key={acc.id}
                   variant="outline"
