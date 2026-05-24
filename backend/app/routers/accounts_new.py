@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
-from app import database  # ✅ Import module instead of 'db'
+from app import database
 from pydantic import BaseModel
 from app.core.security import get_current_user
 from bson import ObjectId
@@ -10,45 +10,75 @@ router = APIRouter(prefix="/accounts", tags=["Accounts"])
 class AccountCreate(BaseModel):
     name: str
     type: str
-    balance: float
+    balance: float = 0
 
-class AccountResponse(AccountCreate):
+class AccountResponse(BaseModel):
     id: str
+    name: str
+    type: str
+    balance: float
+    user_id: str
 
-@router.get("/", response_model=List[AccountResponse])
+@router.get("/")
 async def get_accounts(current_user: dict = Depends(get_current_user)):
-    """Fetch all accounts for the current user."""
+    """Fetch all accounts for the current user from database."""
     if database.accounts is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
-    cursor = database.accounts.find({"user_id": str(current_user["id"])})
-    accounts_list = []
-    async for acc in cursor:
-        acc["id"] = str(acc["_id"])
-        accounts_list.append(acc)
-    return accounts_list
+    try:
+        user_id = str(current_user.get("_id") or current_user.get("id"))
+        print(f"🔍 Fetching accounts for user_id: {user_id}")
+        
+        # Find all accounts for this user
+        accounts_list = []
+        cursor = database.accounts.find({"user_id": user_id})
+        
+        async for acc in cursor:
+            acc["id"] = str(acc["_id"])
+            del acc["_id"]
+            accounts_list.append(acc)
+        
+        print(f"📋 Found {len(accounts_list)} accounts")
+        return {"accounts": accounts_list}
+    
+    except Exception as e:
+        print(f"❌ Error fetching accounts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/", response_model=AccountResponse)
+@router.post("/")
 async def create_account(account: AccountCreate, current_user: dict = Depends(get_current_user)):
     """Create a new account for the current user."""
     if database.accounts is None:
         raise HTTPException(status_code=500, detail="Database not connected")
     
-    acc_data = account.dict()
-    acc_data["user_id"] = str(current_user["id"])
+    try:
+        user_id = str(current_user.get("_id") or current_user.get("id"))
+        
+        acc_data = {
+            "name": account.name,
+            "type": account.type,
+            "balance": account.balance,
+            "user_id": user_id
+        }
+        
+        # Insert into database
+        result = await database.accounts.insert_one(acc_data)
+        
+        # Fetch the created account
+        created_acc = await database.accounts.find_one({"_id": result.inserted_id})
+        
+        if not created_acc:
+            raise HTTPException(status_code=500, detail="Failed to create account")
+        
+        created_acc["id"] = str(created_acc["_id"])
+        del created_acc["_id"]
+        
+        print(f"✅ Account created: {created_acc}")
+        return created_acc
     
-    # Insert account
-    new_acc = await database.accounts.insert_one(acc_data)
-    
-    # ✅ FIX: Use _id field that MongoDB creates
-    created_acc = await database.accounts.find_one({"_id": new_acc.inserted_id})
-    
-    if not created_acc:
-        raise HTTPException(status_code=500, detail="Failed to create account")
-    
-    # Convert ObjectId to string
-    created_acc["id"] = str(created_acc["_id"])
-    return created_acc
+    except Exception as e:
+        print(f"❌ Error creating account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{account_id}")
 async def delete_account(account_id: str, current_user: dict = Depends(get_current_user)):
@@ -57,17 +87,19 @@ async def delete_account(account_id: str, current_user: dict = Depends(get_curre
         raise HTTPException(status_code=500, detail="Database not connected")
     
     try:
-        # Convert account_id to ObjectId for comparison
         obj_id = ObjectId(account_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid account ID format")
+        user_id = str(current_user.get("_id") or current_user.get("id"))
+        
+        result = await database.accounts.delete_one({
+            "_id": obj_id,
+            "user_id": user_id
+        })
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Account not found or unauthorized")
+        
+        return {"message": "Account deleted successfully"}
     
-    result = await database.accounts.delete_one({
-        "_id": obj_id,  # Use _id
-        "user_id": str(current_user["id"])
-    })
-    
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Account not found")
-    
-    return {"message": "Account deleted"}
+    except Exception as e:
+        print(f"❌ Error deleting account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -23,13 +23,21 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
   const [isParsing, setIsParsing] = useState(false);
   const [naturalInput, setNaturalInput] = useState('');
 
-  // ✅ Get available accounts with UPI priority
+  // ✅ Get available accounts - ALWAYS from budget.accounts (backend data)
   const getAvailableAccounts = () => {
-    if (!Array.isArray(budget?.accounts) || budget.accounts.length === 0) {
-      return [{ id: 'default', name: 'Cash', type: 'cash', balance: 0 }];
+    console.log('📊 [getAvailableAccounts] budget.accounts:', budget?.accounts);
+    
+    if (!Array.isArray(budget?.accounts)) {
+      console.warn('⚠️ [getAvailableAccounts] budget.accounts is not an array');
+      return [];
     }
     
-    // ✅ Sort: UPI first, then bank, then others
+    if (budget.accounts.length === 0) {
+      console.warn('⚠️ [getAvailableAccounts] No accounts available from backend');
+      return [];
+    }
+    
+    // ✅ Sort: UPI first, then bank, then cash, then others
     const sorted = [...budget.accounts].sort((a, b) => {
       const typeOrder = { upi: 0, bank: 1, cash: 2 };
       const orderA = typeOrder[a.type as keyof typeof typeOrder] ?? 3;
@@ -37,6 +45,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
       return orderA - orderB;
     });
     
+    console.log('✅ [getAvailableAccounts] Sorted accounts:', sorted.map(a => a.name));
     return sorted;
   };
 
@@ -55,9 +64,10 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
     date: new Date().toISOString().split('T')[0],
   });
 
-  // ✅ FIXED: Only run when modal opens or transaction changes
+  // ✅ FIXED: Initialize account when modal opens and accounts are available
   useEffect(() => {
     if (!isOpen) {
+      console.log('📝 [Modal] Closed - resetting form');
       setFormData({
         note: '',
         amount: '',
@@ -69,25 +79,46 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
       return;
     }
 
+    console.log('📝 [Modal] Opened - initializing form');
+
     if (transactionToEdit) {
+      console.log('✏️ [Modal] Editing transaction:', transactionToEdit.id);
       setFormData({
         note: transactionToEdit.note,
         amount: transactionToEdit.amount.toString(),
         category: transactionToEdit.category,
-        account: transactionToEdit.account || 'Cash',
+        account: transactionToEdit.account || '',
         type: transactionToEdit.type,
         date: transactionToEdit.date,
       });
     } else {
-      const defaultAccount = availableAccounts[0]?.name || 'Cash';
-      console.log('📝 Default account set to:', defaultAccount);
+      // ✅ IMPORTANT: Set account to activeAccount or first available account
+      let defaultAccount = '';
+      
+      if (activeAccount && activeAccount !== 'all') {
+        // ✅ If there's an active account, use it
+        const accountExists = availableAccounts.some(a => a.name === activeAccount);
+        if (accountExists) {
+          defaultAccount = activeAccount;
+          console.log('✅ [Modal] Using activeAccount:', activeAccount);
+        }
+      }
+      
+      // ✅ If no active account or it doesn't exist, use first available
+      if (!defaultAccount && availableAccounts.length > 0) {
+        defaultAccount = availableAccounts[0].name;
+        console.log('✅ [Modal] Using first available account:', defaultAccount);
+      }
+
       setFormData(prev => ({
         ...prev,
         account: defaultAccount,
         date: new Date().toISOString().split('T')[0],
       }));
+
+      console.log('📝 [Modal] Default account set to:', defaultAccount);
     }
-  }, [isOpen, transactionToEdit?.id]);
+  }, [isOpen, transactionToEdit?.id, availableAccounts, activeAccount]);
 
   // ✅ Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
@@ -144,7 +175,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
 
       console.log('🤖 AI Response:', data);
 
-      let matchedAccount = availableAccounts[0]?.name || 'Cash';
+      let matchedAccount = availableAccounts.length > 0 ? availableAccounts[0].name : '';
       
       if (data.account && Array.isArray(availableAccounts)) {
         const found = availableAccounts.find(
@@ -163,7 +194,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
         note: data.note || prev.note,
         date: data.date || prev.date,
         type: (data.type === 'income' || data.type === 'expense') ? data.type : prev.type,
-        account: matchedAccount
+        account: matchedAccount || prev.account
       }));
       
       toast.success("AI filled the details! Verify and save.");
@@ -295,7 +326,7 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
                   </Select>
                 ) : (
                   <div className="input-glass mt-1 h-10 flex items-center text-sm text-red-500 px-3">
-                    ⚠️ No accounts available
+                    ⚠️ No accounts created yet
                   </div>
                 )}
               </div>

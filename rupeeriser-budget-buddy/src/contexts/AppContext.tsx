@@ -58,9 +58,6 @@ export const useApp = () => {
   return context;
 };
 
-// ✅ Get user-specific key for localStorage
-const getUserStorageKey = (userId: string, key: string) => `user_${userId}_${key}`;
-
 export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
@@ -80,7 +77,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [language, setLanguage] = useState<'EN' | 'TA' | 'HI'>('EN');
 
-  // ✅ Persist language preference
+  // ✅ Persist language preference to localStorage
   useEffect(() => {
     const savedLang = localStorage.getItem('language');
     if (savedLang === 'EN' || savedLang === 'TA' || savedLang === 'HI') {
@@ -117,67 +114,49 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }, []);
 
-  // ✅ Fetch data from backend + localStorage fallback
+  // ✅ Fetch data from backend ONLY - NO localStorage fallback
   const fetchData = useCallback(async (userId: string) => {
     try {
       console.log('🔄 Fetching data from backend...');
-      console.log('📡 API Base URL:', import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1');
       
-      let txRes, accRes;
-      
+      // ✅ Fetch transactions
+      let allTxn: Transaction[] = [];
       try {
-        txRes = await endpoints.getTransactions();
-      } catch (txErr) {
-        console.error('⚠️ Failed to fetch transactions:', txErr);
-        txRes = { data: [] };
+        console.log('📥 Fetching transactions...');
+        const txRes = await endpoints.getTransactions();
+        console.log('✅ Transactions response:', txRes.data);
+        
+        // Handle response format
+        allTxn = txRes.data.transactions || [];
+      } catch (txErr: any) {
+        console.error('❌ Failed to fetch transactions:', txErr);
+        allTxn = [];
       }
       
+      // ✅ Fetch accounts
+      let accountsList: Account[] = [];
       try {
-        accRes = await endpoints.getAccounts();
-      } catch (accErr) {
-        console.error('⚠️ Failed to fetch accounts:', accErr);
-        accRes = { data: [] };
-      }
-      
-      // ✅ Process transactions
-      const txData = Array.isArray(txRes.data) ? txRes.data : txRes.data?.transactions || [];
-      const formattedTx = txData.map((t: any) => ({...t, id: t.id || t._id}));
-      
-      // ✅ Process accounts
-      let accountsData: Account[] = [];
-      if (Array.isArray(accRes.data)) {
-        accountsData = accRes.data;
-      } else if (accRes.data?.accounts && Array.isArray(accRes.data.accounts)) {
-        accountsData = accRes.data.accounts;
-      }
-      
-      console.log('📥 Backend Transactions:', formattedTx);
-      console.log('📥 Backend Accounts:', accountsData);
-      
-      // ✅ If backend returns data, use it and save to localStorage
-      if (formattedTx.length > 0 || accountsData.length > 0) {
-        console.log('✅ Backend data loaded successfully');
-        setAllTransactions(formattedTx);
-        setBudget(prev => ({...prev, accounts: accountsData}));
-        localStorage.setItem(getUserStorageKey(userId, 'transactions'), JSON.stringify(formattedTx));
-        localStorage.setItem(getUserStorageKey(userId, 'accounts'), JSON.stringify(accountsData));
-      } else {
-        // ✅ Backend returned nothing, load from localStorage
-        console.log('⚠️ Backend returned empty, loading from localStorage...');
-        const storedTx = localStorage.getItem(getUserStorageKey(userId, 'transactions'));
-        const storedAcc = localStorage.getItem(getUserStorageKey(userId, 'accounts'));
+        console.log('📥 Fetching accounts...');
+        const accRes = await endpoints.getAccounts();
+        console.log('✅ Accounts response:', accRes.data);
         
-        console.log('💾 Stored Transactions:', storedTx ? JSON.parse(storedTx) : 'None');
-        console.log('💾 Stored Accounts:', storedAcc ? JSON.parse(storedAcc) : 'None');
-        
-        if (storedTx) setAllTransactions(JSON.parse(storedTx));
-        if (storedAcc) setBudget(prev => ({...prev, accounts: JSON.parse(storedAcc)}));
+        // Handle response format
+        accountsList = accRes.data.accounts || [];
+      } catch (accErr: any) {
+        console.error('❌ Failed to fetch accounts:', accErr);
+        accountsList = [];
       }
+      
+      console.log('📥 Backend Transactions:', allTxn);
+      console.log('📥 Backend Accounts:', accountsList);
+      
+      // ✅ Update state with backend data
+      setAllTransactions(allTxn);
+      setBudget(prev => ({...prev, accounts: accountsList}));
       
       // ✅ Auto-set active account to first account
-      const accountsToUse = accountsData.length > 0 ? accountsData : (localStorage.getItem(getUserStorageKey(userId, 'accounts')) ? JSON.parse(localStorage.getItem(getUserStorageKey(userId, 'accounts'))) : []);
-      if (accountsToUse.length > 0 && activeAccount === 'all') {
-        const preferredAccount = accountsToUse.find((a: Account) => a.type === 'upi') || accountsToUse[0];
+      if (accountsList.length > 0 && activeAccount === 'all') {
+        const preferredAccount = accountsList.find((a: Account) => a.type === 'upi') || accountsList[0];
         setActiveAccount(preferredAccount.name);
         console.log('🎯 Auto-set active account to:', preferredAccount.name);
       }
@@ -256,34 +235,26 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  // ✅ Add transaction - SAVE TO BOTH BACKEND AND LOCALSTORAGE
+  // ✅ Add transaction
   const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
     console.log('📨 Adding transaction:', data);
     
-    const newTx: Transaction = {
-      ...data,
-      id: `txn_${Date.now()}`,
-      user_id: user?.id || 'local'
-    };
-    
-    // ✅ Optimistic update
-    setAllTransactions(prev => [newTx, ...prev]);
-    
     try {
-      // Try to save to backend
+      // Save to backend
       await endpoints.addTransaction(data);
       console.log('✅ Transaction saved to backend');
+      
+      // Refresh transactions from backend
+      const txRes = await endpoints.getTransactions();
+      const updatedTxn = txRes.data.transactions || [];
+      setAllTransactions(updatedTxn);
+      
+      toast.success('✅ Transaction saved!');
     } catch (e) {
-      console.error('⚠️ Backend failed, but saved to localStorage:', e);
+      console.error('❌ Failed to add transaction:', e);
+      toast.error('Failed to save transaction');
+      throw e;
     }
-    
-    // ✅ Always save to localStorage
-    setAllTransactions(prev => {
-      localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(prev));
-      return prev;
-    });
-    
-    toast.success('✅ Transaction saved!');
   };
 
   // ✅ Edit transaction
@@ -291,11 +262,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       await endpoints.updateTransaction(id, data);
       
-      setAllTransactions(prev => {
-        const updated = prev.map(tx => tx.id === id ? {...tx, ...data} : tx);
-        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(updated));
-        return updated;
-      });
+      // Refresh transactions
+      const txRes = await endpoints.getTransactions();
+      setAllTransactions(txRes.data.transactions || []);
       
       toast.success('✅ Transaction updated!');
     } catch (e) {
@@ -306,14 +275,13 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   // ✅ Delete transaction
   const deleteTransaction = async (id: string) => {
-    setAllTransactions(prev => {
-      const filtered = prev.filter(tx => tx.id !== id);
-      localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(filtered));
-      return filtered;
-    });
-    
     try {
       await endpoints.deleteTransaction(id);
+      
+      // Refresh transactions
+      const txRes = await endpoints.getTransactions();
+      setAllTransactions(txRes.data.transactions || []);
+      
       toast.success('✅ Transaction deleted!');
     } catch (e) {
       console.error('❌ Failed to delete:', e);
@@ -332,41 +300,26 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  // ✅ Create account - SAVE TO BOTH BACKEND AND LOCALSTORAGE
+  // ✅ Create account
   const createAccount = async (data: Omit<Account, 'id'>) => {
     try {
       console.log('🏦 Creating account:', data);
       
-      const newAccount: Account = {
-        id: `acc_${Date.now()}`,
-        name: data.name,
-        type: data.type,
-        balance: data.balance || 0,
-      };
+      // Save to backend
+      await endpoints.createAccount(data);
+      console.log('✅ Account saved to backend');
       
-      // ✅ Optimistic update
-      setBudget(prev => ({
-        ...prev,
-        accounts: [...prev.accounts, newAccount]
-      }));
+      // Refresh accounts from backend
+      const accRes = await endpoints.getAccounts();
+      const updatedAccounts = accRes.data.accounts || [];
+      setBudget(prev => ({...prev, accounts: updatedAccounts}));
       
-      setActiveAccount(newAccount.name);
-      
-      try {
-        // Try backend
-        await endpoints.createAccount(data);
-        console.log('✅ Account saved to backend');
-      } catch (e) {
-        console.error('⚠️ Backend failed, but saved to localStorage:', e);
+      // Auto-set to new account
+      if (updatedAccounts.length > 0) {
+        setActiveAccount(updatedAccounts[updatedAccounts.length - 1].name);
       }
       
-      // ✅ Always save to localStorage
-      setBudget(prev => {
-        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'accounts'), JSON.stringify(prev.accounts));
-        return prev;
-      });
-      
-      toast.success(`✅ Account "${newAccount.name}" created!`);
+      toast.success(`✅ Account "${data.name}" created!`);
       
     } catch (e) { 
       console.error('❌ Failed to create account:', e);
@@ -379,11 +332,10 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       await endpoints.deleteAccount(id);
       
-      setBudget(prev => {
-        const filtered = prev.accounts.filter(acc => acc.id !== id);
-        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'accounts'), JSON.stringify(filtered));
-        return {...prev, accounts: filtered};
-      });
+      // Refresh accounts
+      const accRes = await endpoints.getAccounts();
+      const updatedAccounts = accRes.data.accounts || [];
+      setBudget(prev => ({...prev, accounts: updatedAccounts}));
       
       if (activeAccount === id) setActiveAccount('all');
       toast.success('✅ Account deleted!');

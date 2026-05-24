@@ -2,6 +2,8 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000`;
 
+console.log('🌐 API Base URL:', API_URL);
+
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -9,19 +11,41 @@ const api = axios.create({
   },
 });
 
+// ✅ Request interceptor with enhanced logging
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  console.log(`📤 Request: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
+  console.log('🔑 Token present:', !!token);
   return config;
 });
 
+// ✅ Response interceptor with enhanced error logging
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    console.log(`✅ Response: ${response.status} ${response.config.url}`, response.data);
+    return response;
+  },
   (error) => {
+    // ✅ Log detailed error information
+    if (error.response) {
+      console.error(`❌ API Error: ${error.response.status}`, {
+        url: error.response.config?.url,
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers,
+      });
+    } else if (error.request) {
+      console.error('❌ No response from server:', error.request);
+    } else {
+      console.error('❌ Request setup error:', error.message);
+    }
+
     if (error.response && error.response.status === 401) {
       if (localStorage.getItem('token')) {
+        console.warn('🔓 Unauthorized - Clearing token');
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
         window.location.href = '/login';
@@ -58,7 +82,7 @@ export const getErrorMessage = (error: any): string => {
   }
 
   // Default message
-  return "Something went wrong";
+  return error.message || "Something went wrong";
 };
 
 export const endpoints = {
