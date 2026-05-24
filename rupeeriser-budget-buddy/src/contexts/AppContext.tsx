@@ -104,6 +104,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     if (token) {
       endpoints.getMe()
         .then((res) => {
+          console.log('✅ User auto-loaded:', res.data);
           setUser(res.data);
           fetchData(res.data._id || res.data.id);
         })
@@ -120,14 +121,26 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const fetchData = useCallback(async (userId: string) => {
     try {
       console.log('🔄 Fetching data from backend...');
+      console.log('📡 API Base URL:', import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1');
       
-      const [txRes, accRes] = await Promise.all([
-        endpoints.getTransactions(),
-        endpoints.getAccounts(),
-      ]);
+      let txRes, accRes;
+      
+      try {
+        txRes = await endpoints.getTransactions();
+      } catch (txErr) {
+        console.error('⚠️ Failed to fetch transactions:', txErr);
+        txRes = { data: [] };
+      }
+      
+      try {
+        accRes = await endpoints.getAccounts();
+      } catch (accErr) {
+        console.error('⚠️ Failed to fetch accounts:', accErr);
+        accRes = { data: [] };
+      }
       
       // ✅ Process transactions
-      const txData = Array.isArray(txRes.data) ? txRes.data : [];
+      const txData = Array.isArray(txRes.data) ? txRes.data : txRes.data?.transactions || [];
       const formattedTx = txData.map((t: any) => ({...t, id: t.id || t._id}));
       
       // ✅ Process accounts
@@ -143,6 +156,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       
       // ✅ If backend returns data, use it and save to localStorage
       if (formattedTx.length > 0 || accountsData.length > 0) {
+        console.log('✅ Backend data loaded successfully');
         setAllTransactions(formattedTx);
         setBudget(prev => ({...prev, accounts: accountsData}));
         localStorage.setItem(getUserStorageKey(userId, 'transactions'), JSON.stringify(formattedTx));
@@ -153,12 +167,15 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         const storedTx = localStorage.getItem(getUserStorageKey(userId, 'transactions'));
         const storedAcc = localStorage.getItem(getUserStorageKey(userId, 'accounts'));
         
+        console.log('💾 Stored Transactions:', storedTx ? JSON.parse(storedTx) : 'None');
+        console.log('💾 Stored Accounts:', storedAcc ? JSON.parse(storedAcc) : 'None');
+        
         if (storedTx) setAllTransactions(JSON.parse(storedTx));
         if (storedAcc) setBudget(prev => ({...prev, accounts: JSON.parse(storedAcc)}));
       }
       
       // ✅ Auto-set active account to first account
-      const accountsToUse = accountsData.length > 0 ? accountsData : (localStorage.getItem(getUserStorageKey(userId, 'accounts')) ? JSON.parse(localStorage.getItem(getUserStorageKey(userId, 'accounts'))!) : []);
+      const accountsToUse = accountsData.length > 0 ? accountsData : (localStorage.getItem(getUserStorageKey(userId, 'accounts')) ? JSON.parse(localStorage.getItem(getUserStorageKey(userId, 'accounts'))) : []);
       if (accountsToUse.length > 0 && activeAccount === 'all') {
         const preferredAccount = accountsToUse.find((a: Account) => a.type === 'upi') || accountsToUse[0];
         setActiveAccount(preferredAccount.name);
@@ -167,6 +184,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       
     } catch (error) {
       console.error("❌ Failed to fetch data:", error);
+      toast.error('Failed to load data');
     } finally {
       setIsLoading(false);
     }
@@ -186,6 +204,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       })
       .catch(err => {
         console.error('❌ Failed to get user data:', err);
+        toast.error('Failed to load user data');
       });
   };
 
@@ -217,8 +236,10 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       await endpoints.updateProfile(data); 
       setUser(prev => prev ? { ...prev, ...data } : null);
+      toast.success('✅ Profile updated!');
     } catch (err) {
       console.error("Profile update error", err);
+      toast.error('Failed to update profile');
       throw err;
     }
   };
@@ -227,8 +248,10 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const changePassword = async (data: { current_password: string; new_password: string; plain_text_password?: string }) => {
     try {
       await endpoints.changePassword(data);
+      toast.success('✅ Password changed!');
     } catch (err) {
       console.error("Password change error", err);
+      toast.error('Failed to change password');
       throw err;
     }
   };
@@ -247,10 +270,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     setAllTransactions(prev => [newTx, ...prev]);
     
     try {
-      // Try to save to backend (might return "Coming soon")
+      // Try to save to backend
       await endpoints.addTransaction(data);
+      console.log('✅ Transaction saved to backend');
     } catch (e) {
-      console.error('❌ Backend failed:', e);
+      console.error('⚠️ Backend failed, but saved to localStorage:', e);
     }
     
     // ✅ Always save to localStorage
@@ -293,6 +317,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       toast.success('✅ Transaction deleted!');
     } catch (e) {
       console.error('❌ Failed to delete:', e);
+      toast.error('Failed to delete');
     }
   };
 
@@ -328,10 +353,11 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       setActiveAccount(newAccount.name);
       
       try {
-        // Try backend (might return "Coming soon")
+        // Try backend
         await endpoints.createAccount(data);
+        console.log('✅ Account saved to backend');
       } catch (e) {
-        console.error('❌ Backend failed:', e);
+        console.error('⚠️ Backend failed, but saved to localStorage:', e);
       }
       
       // ✅ Always save to localStorage
@@ -392,8 +418,9 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         goals: prev.goals.filter(g => g.id !== id)
       }));
       toast.success('✅ Goal deleted!');
-    } catch (e) { 
+    } catch (e) {
       console.error('❌ Failed to delete goal:', e);
+      toast.error('Failed to delete goal');
     }
   };
 

@@ -14,6 +14,7 @@ export interface User {
   state?: string;
   pincode?: string;
   avatar?: string;
+  _id?: string;
 }
 
 export interface Account {
@@ -23,14 +24,18 @@ export interface Account {
   balance: number;
 }
 
+// ✅ Updated to match API response
 export interface Transaction {
-  id: string;
+  id?: string;
+  _id?: string;
   date: string;
   amount: number;
   category: string;
   note: string;
   type: 'income' | 'expense';
-  account: string; 
+  account: string;
+  user_id?: string;
+  created_at?: string;
 }
 
 // ✅ Ensuring Goal is defined
