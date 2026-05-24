@@ -48,6 +48,10 @@ interface AppContextType {
 
   language: 'EN' | 'TA' | 'HI';
   setLanguage: React.Dispatch<React.SetStateAction<'EN' | 'TA' | 'HI'>>;
+
+  // ✅ NEW: Flag to prevent auto-setting active account on first login
+  hasShownAccountSelection: boolean;
+  setHasShownAccountSelection: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -76,6 +80,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
   const [habits, setHabits] = useState<Habit[]>([]);
   const [language, setLanguage] = useState<'EN' | 'TA' | 'HI'>('EN');
+  const [hasShownAccountSelection, setHasShownAccountSelection] = useState(false);
 
   // ✅ Persist language preference to localStorage
   useEffect(() => {
@@ -101,7 +106,6 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     if (token) {
       endpoints.getMe()
         .then((res) => {
-          console.log('✅ User auto-loaded:', res.data);
           setUser(res.data);
           fetchData(res.data._id || res.data.id);
         })
@@ -115,18 +119,13 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   // ✅ Fetch data from backend ONLY - NO localStorage fallback
+  // ✅ FIXED: Don't auto-set activeAccount on login, wait for user to choose
   const fetchData = useCallback(async (userId: string) => {
     try {
-      console.log('🔄 Fetching data from backend...');
-      
       // ✅ Fetch transactions
       let allTxn: Transaction[] = [];
       try {
-        console.log('📥 Fetching transactions...');
         const txRes = await endpoints.getTransactions();
-        console.log('✅ Transactions response:', txRes.data);
-        
-        // Handle response format
         allTxn = txRes.data.transactions || [];
       } catch (txErr: any) {
         console.error('❌ Failed to fetch transactions:', txErr);
@@ -136,29 +135,25 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       // ✅ Fetch accounts
       let accountsList: Account[] = [];
       try {
-        console.log('📥 Fetching accounts...');
         const accRes = await endpoints.getAccounts();
-        console.log('✅ Accounts response:', accRes.data);
-        
-        // Handle response format
         accountsList = accRes.data.accounts || [];
       } catch (accErr: any) {
         console.error('❌ Failed to fetch accounts:', accErr);
         accountsList = [];
       }
       
-      console.log('📥 Backend Transactions:', allTxn);
-      console.log('📥 Backend Accounts:', accountsList);
-      
       // ✅ Update state with backend data
       setAllTransactions(allTxn);
       setBudget(prev => ({...prev, accounts: accountsList}));
       
-      // ✅ Auto-set active account to first account
-      if (accountsList.length > 0 && activeAccount === 'all') {
-        const preferredAccount = accountsList.find((a: Account) => a.type === 'upi') || accountsList[0];
-        setActiveAccount(preferredAccount.name);
-        console.log('🎯 Auto-set active account to:', preferredAccount.name);
+      // ✅ FIXED: Only auto-set active account if user hasn't been shown selection modal yet
+      if (accountsList.length > 0 && !hasShownAccountSelection) {
+        // Keep activeAccount as 'all' - let AccountSelectionModal handle the choice
+        setActiveAccount('all');
+        setHasShownAccountSelection(true);
+      } else if (accountsList.length === 0) {
+        // No accounts? Keep as 'all' so user sees "create account" in modal
+        setActiveAccount('all');
       }
       
     } catch (error) {
@@ -167,17 +162,16 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [activeAccount]);
+  }, [hasShownAccountSelection]);
 
   // ✅ Login
   const login = (token: string, name: string) => {
-    console.log('🔐 Logging in user:', name);
     localStorage.setItem('token', token);
     localStorage.setItem('user_name', name);
+    setHasShownAccountSelection(false); // ✅ Reset flag on login
     
     endpoints.getMe()
       .then(res => {
-        console.log('✅ Got user data:', res.data);
         setUser(res.data);
         fetchData(res.data._id || res.data.id);
       })
@@ -193,12 +187,12 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem('token', res.data.access_token);
     const userData = { id: '', name: res.data.user_name, email: data.email };
     setUser(userData as User);
+    setHasShownAccountSelection(false); // ✅ Reset flag on signup
     await fetchData(userData.id);
   };
 
   // ✅ Logout
   const logout = () => {
-    console.log('🚪 Logging out');
     localStorage.removeItem('token');
     localStorage.removeItem('user_name');
     
@@ -206,6 +200,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     setAllTransactions([]);
     setBudget(prev => ({...prev, accounts: []}));
     setActiveAccount('all');
+    setHasShownAccountSelection(false); // ✅ Reset flag on logout
     setHabits([]);
     queryClient.clear();
   };
@@ -237,12 +232,8 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
 
   // ✅ Add transaction
   const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
-    console.log('📨 Adding transaction:', data);
-    
     try {
-      // Save to backend
       await endpoints.addTransaction(data);
-      console.log('✅ Transaction saved to backend');
       
       // Refresh transactions from backend
       const txRes = await endpoints.getTransactions();
@@ -303,11 +294,8 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   // ✅ Create account
   const createAccount = async (data: Omit<Account, 'id'>) => {
     try {
-      console.log('🏦 Creating account:', data);
-      
       // Save to backend
       await endpoints.createAccount(data);
-      console.log('✅ Account saved to backend');
       
       // Refresh accounts from backend
       const accRes = await endpoints.getAccounts();
@@ -438,7 +426,8 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       budget, setBudget, updateBudgetSettings, activeAccount, setActiveAccount,
       createAccount, deleteAccount, addGoal, deleteGoal, chatMessages, setChatMessages,
       habits, addHabit, toggleHabitCheck, deleteHabit, seedHabits,
-      language, setLanguage
+      language, setLanguage,
+      hasShownAccountSelection, setHasShownAccountSelection
     }}>
       {children}
     </AppContext.Provider>
