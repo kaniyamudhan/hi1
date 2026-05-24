@@ -19,115 +19,122 @@ interface AddTransactionModalProps {
 const categories = ['Food', 'Transport', 'Shopping', 'Health', 'Entertainment', 'Education', 'Bills', 'Other'];
 
 export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddTransactionModalProps) => {
-  const { addTransaction, editTransaction, budget, activeAccount } = useApp();
+  const { addTransaction, editTransaction, budget, activeAccount, setActiveAccount } = useApp();
   const [isParsing, setIsParsing] = useState(false);
   const [naturalInput, setNaturalInput] = useState('');
 
-  // ✅ FIXED: Ensure accounts is always an array
-  const availableAccounts = Array.isArray(budget?.accounts) && budget.accounts.length > 0 
-    ? budget.accounts 
-    : [{ id: 'default', name: 'Cash', type: 'cash', balance: 0 }];
+  // ✅ Get available accounts with UPI priority
+  const getAvailableAccounts = () => {
+    if (!Array.isArray(budget?.accounts) || budget.accounts.length === 0) {
+      return [{ id: 'default', name: 'Cash', type: 'cash', balance: 0 }];
+    }
+    
+    // ✅ Sort: UPI first, then bank, then others
+    const sorted = [...budget.accounts].sort((a, b) => {
+      const typeOrder = { upi: 0, bank: 1, cash: 2 };
+      const orderA = typeOrder[a.type as keyof typeof typeOrder] ?? 3;
+      const orderB = typeOrder[b.type as keyof typeof typeOrder] ?? 3;
+      return orderA - orderB;
+    });
+    
+    return sorted;
+  };
+
+  const availableAccounts = getAvailableAccounts();
 
   console.log('📊 Available Accounts:', availableAccounts);
   console.log('🏦 Active Account:', activeAccount);
 
-  // 2. Helper to get a valid default account string
-  const getDefaultAccount = () => {
-    if (activeAccount !== 'all' && activeAccount) return activeAccount;
-    const defaultAcc = availableAccounts[0]?.name || 'Cash';
-    console.log('📝 Default account:', defaultAcc);
-    return defaultAcc;
-  };
-
-  // ✅ Initialize state with guaranteed non-empty value
+  // ✅ Initialize form state
   const [formData, setFormData] = useState({
     note: '', 
     amount: '', 
     category: 'Food', 
-    account: getDefaultAccount() || 'Cash', // ✅ Ensure always has value
+    account: '', 
     type: 'expense' as 'expense' | 'income', 
     date: new Date().toISOString().split('T')[0],
   });
 
-  // Reset/Populate form when modal opens
+  // ✅ FIXED: Only run when modal opens or transaction changes
   useEffect(() => {
-    if (isOpen) {
-      if (transactionToEdit) {
-        setFormData({
-          note: transactionToEdit.note,
-          amount: transactionToEdit.amount.toString(),
-          category: transactionToEdit.category,
-          account: transactionToEdit.account || getDefaultAccount() || 'Cash',
-          type: transactionToEdit.type,
-          date: transactionToEdit.date,
-        });
-      } else {
-        const defaultAcc = getDefaultAccount() || 'Cash';
-        console.log('📝 Setting default account to:', defaultAcc);
-        setFormData({
-          note: '', 
-          amount: '', 
-          category: 'Food', 
-          account: defaultAcc,
-          type: 'expense', 
-          date: new Date().toISOString().split('T')[0],
-        });
-        setNaturalInput('');
-      }
+    if (!isOpen) {
+      setFormData({
+        note: '',
+        amount: '',
+        category: 'Food',
+        account: '',
+        type: 'expense',
+        date: new Date().toISOString().split('T')[0],
+      });
+      return;
     }
-  }, [isOpen, transactionToEdit, availableAccounts]);
 
-  // ✅ VALIDATION & SUBMIT
+    if (transactionToEdit) {
+      setFormData({
+        note: transactionToEdit.note,
+        amount: transactionToEdit.amount.toString(),
+        category: transactionToEdit.category,
+        account: transactionToEdit.account || 'Cash',
+        type: transactionToEdit.type,
+        date: transactionToEdit.date,
+      });
+    } else {
+      const defaultAccount = availableAccounts[0]?.name || 'Cash';
+      console.log('📝 Default account set to:', defaultAccount);
+      setFormData(prev => ({
+        ...prev,
+        account: defaultAccount,
+        date: new Date().toISOString().split('T')[0],
+      }));
+    }
+  }, [isOpen, transactionToEdit?.id]);
+
+  // ✅ Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     console.log('💾 Submitting transaction:', formData);
     
-    // Check specific columns
     if (!formData.note.trim()) { 
-        toast.error('Please enter a description'); 
-        return; 
+      toast.error('Please enter a description'); 
+      return; 
     }
     if (!formData.amount || parseFloat(formData.amount) <= 0) { 
-        toast.error('Please enter a valid amount'); 
-        return; 
+      toast.error('Please enter a valid amount'); 
+      return; 
     }
     if (!formData.category) {
-        toast.error('Please select a category');
-        return;
+      toast.error('Please select a category');
+      return;
     }
-    // ✅ FIX: Ensure account is not empty
     if (!formData.account || !formData.account.trim()) {
-        toast.error('Please select an account');
-        console.error('❌ Account is empty:', formData.account);
-        return;
+      toast.error('Please select an account');
+      return;
     }
 
     const payload = { 
       ...formData, 
       amount: parseFloat(formData.amount),
-      account: formData.account.trim() // ✅ Ensure account is included and trimmed
+      account: formData.account.trim()
     };
 
     console.log('📤 Final payload:', payload);
 
     try {
-        if (transactionToEdit) {
-          console.log('✏️ Editing transaction:', transactionToEdit.id);
-          await editTransaction(transactionToEdit.id, payload);
-        } else {
-          console.log('➕ Adding new transaction');
-          await addTransaction(payload);
-        }
-        toast.success('Transaction saved successfully!');
-        onClose();
+      if (transactionToEdit) {
+        console.log('✏️ Editing transaction:', transactionToEdit.id);
+        await editTransaction(transactionToEdit.id, payload);
+      } else {
+        console.log('➕ Adding new transaction');
+        await addTransaction(payload);
+      }
+      onClose();
     } catch (error) { 
-        console.error('❌ Error saving transaction:', error);
-        toast.error("Failed to save transaction"); 
+      console.error('❌ Error saving transaction:', error);
     }
   };
 
-  // ✅ AI PARSE WITH SMART ACCOUNT SELECTION
+  // ✅ Handle AI parsing
   const handleParse = async () => {
     if (!naturalInput.trim()) return;
     setIsParsing(true);
@@ -137,54 +144,56 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
 
       console.log('🤖 AI Response:', data);
 
-      // Smart Account Matcher:
-      // Check if AI's suggested account exists in our list (case-insensitive)
-      let matchedAccount = getDefaultAccount() || 'Cash'; // Default fallback
+      let matchedAccount = availableAccounts[0]?.name || 'Cash';
       
-      // ✅ FIXED: Check if availableAccounts is array before using .find()
       if (data.account && Array.isArray(availableAccounts)) {
-          const found = availableAccounts.find(
-              acc => acc.name.toLowerCase() === data.account.toLowerCase()
-          );
-          if (found) {
-            matchedAccount = found.name;
-            console.log('✅ AI account matched to:', matchedAccount);
-          }
+        const found = availableAccounts.find(
+          acc => acc.name.toLowerCase() === data.account.toLowerCase()
+        );
+        if (found) {
+          matchedAccount = found.name;
+          console.log('✅ AI account matched to:', matchedAccount);
+        }
       }
 
       setFormData(prev => ({
         ...prev,
-        amount: data.amount.toString(),
-        category: data.category || "Other",
-        note: data.note,
+        amount: data.amount?.toString() || prev.amount,
+        category: data.category || prev.category,
+        note: data.note || prev.note,
         date: data.date || prev.date,
-        type: (data.type === 'income' || data.type === 'expense') ? data.type : 'expense',
-        account: matchedAccount || 'Cash' // ✅ Ensure always has value
+        type: (data.type === 'income' || data.type === 'expense') ? data.type : prev.type,
+        account: matchedAccount
       }));
       
-      toast.success("AI filled the details! Verify account & category.");
+      toast.success("AI filled the details! Verify and save.");
     } catch (error) { 
-        console.error('❌ AI parsing error:', error);
-        toast.error("AI couldn't understand that."); 
+      console.error('❌ AI parsing error:', error);
+      toast.error("AI couldn't understand that."); 
     } 
     finally { setIsParsing(false); }
   };
 
-  // ✅ FIX: Ensure account value is always valid for Select
-  const accountValue = formData.account && formData.account.trim() ? formData.account : 'Cash';
+  const accountValue = formData.account && formData.account.trim() ? formData.account : '';
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="glass-card max-w-sm w-[90%] border-primary/20 p-5 rounded-3xl">
         <DialogHeader className="mb-2">
-          <DialogTitle className="font-display text-lg text-center">{transactionToEdit ? 'Edit Transaction' : 'New Entry'}</DialogTitle>
-          <DialogDescription className="text-center text-xs text-muted-foreground hidden">Transaction Details</DialogDescription>
+          <DialogTitle className="font-display text-lg text-center">
+            {transactionToEdit ? 'Edit Transaction' : 'New Entry'}
+          </DialogTitle>
+          <DialogDescription className="text-center text-xs text-muted-foreground hidden">
+            Transaction Details
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           {!transactionToEdit && (
             <div className="bg-blue-50/50 dark:bg-blue-900/10 p-3 rounded-2xl border border-blue-100 dark:border-blue-800">
-              <Label className="text-blue-600 flex items-center gap-1 mb-2 text-[10px] font-bold uppercase tracking-wider"><Sparkles className="w-3 h-3" /> AI Quick Add</Label>
+              <Label className="text-blue-600 flex items-center gap-1 mb-2 text-[10px] font-bold uppercase tracking-wider">
+                <Sparkles className="w-3 h-3" /> AI Quick Add
+              </Label>
               <div className="flex gap-2">
                 <Input 
                   value={naturalInput} 
@@ -206,8 +215,9 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
 
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
+              {/* Description */}
               <div className="col-span-2">
-                <Label className="text-xs">Description</Label>
+                <Label className="text-xs font-semibold">Description</Label>
                 <Input 
                   value={formData.note} 
                   onChange={(e) => setFormData({ ...formData, note: e.target.value })} 
@@ -215,8 +225,10 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
                   placeholder="What's this for?"
                 />
               </div>
+
+              {/* Amount */}
               <div>
-                <Label className="text-xs">Amount</Label>
+                <Label className="text-xs font-semibold">Amount</Label>
                 <Input 
                   type="number" 
                   value={formData.amount} 
@@ -225,8 +237,10 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
                   placeholder="0"
                 />
               </div>
+
+              {/* Date */}
               <div>
-                <Label className="text-xs">Date</Label>
+                <Label className="text-xs font-semibold">Date</Label>
                 <Input 
                   type="date" 
                   value={formData.date} 
@@ -237,10 +251,10 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
               
               {/* Category Select */}
               <div>
-                <Label className="text-xs">Category</Label>
+                <Label className="text-xs font-semibold">Category</Label>
                 <Select value={formData.category} onValueChange={(v) => setFormData({ ...formData, category: v })}>
                   <SelectTrigger className="input-glass mt-1 h-10 text-sm">
-                    <SelectValue placeholder="Select" />
+                    <SelectValue placeholder="Select Category" />
                   </SelectTrigger>
                   <SelectContent>
                     {categories.map((cat) => (
@@ -250,63 +264,77 @@ export const AddTransactionModal = ({ isOpen, onClose, transactionToEdit }: AddT
                 </Select>
               </div>
               
-              {/* Account Select - ✅ FIXED */}
+              {/* Account Select */}
               <div>
-                <Label className="text-xs">Account</Label>
-                <Select 
-                  value={accountValue}
-                  onValueChange={(v) => {
-                    console.log('🏦 Account changed to:', v);
-                    setFormData({ ...formData, account: v });
-                  }}
-                >
-                  <SelectTrigger className="input-glass mt-1 h-10 text-sm">
-                    <SelectValue placeholder={accountValue || "Select"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableAccounts.length > 0 ? (
-                      availableAccounts.map((acc) => (
-                        <SelectItem key={`acc-${acc.id}`} value={acc.name}>
-                          {acc.name} ({acc.type})
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="Cash" disabled>
-                        No accounts available
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                {availableAccounts.length === 0 && (
-                  <p className="text-xs text-red-500 mt-1">⚠️ No accounts found. Create one first.</p>
+                <Label className="text-xs font-semibold">Account</Label>
+                {availableAccounts.length > 0 ? (
+                  <Select 
+                    value={accountValue}
+                    onValueChange={(v) => {
+                      console.log('🏦 Account selected:', v);
+                      setFormData({ ...formData, account: v });
+                      setActiveAccount(v);
+                    }}
+                  >
+                    <SelectTrigger className="input-glass mt-1 h-10 text-sm">
+                      <SelectValue placeholder="Select Account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableAccounts.map((acc) => {
+                        const displayLabel = `${acc.name} (${acc.type})`;
+                        return (
+                          <SelectItem 
+                            key={`acc-${acc.id}-${acc.name}`} 
+                            value={acc.name}
+                          >
+                            {displayLabel}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="input-glass mt-1 h-10 flex items-center text-sm text-red-500 px-3">
+                    ⚠️ No accounts available
+                  </div>
                 )}
               </div>
             </div>
 
+            {/* Expense / Income Toggle */}
             <div className="flex gap-2 pt-2">
               <Button 
                 type="button" 
                 variant="outline" 
                 onClick={() => setFormData({ ...formData, type: 'expense' })} 
-                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'expense' ? 'bg-red-500 text-white hover:bg-red-600 border-red-500' : 'text-muted-foreground'}`}
+                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${
+                  formData.type === 'expense' 
+                    ? 'bg-red-500 text-white hover:bg-red-600 border-red-500' 
+                    : 'text-muted-foreground'
+                }`}
               >
-                Expense
+                💸 Expense
               </Button>
               <Button 
                 type="button" 
                 variant="outline" 
                 onClick={() => setFormData({ ...formData, type: 'income' })}
-                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${formData.type === 'income' ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600' : 'text-muted-foreground'}`}
+                className={`flex-1 rounded-xl h-10 text-xs font-medium transition-all ${
+                  formData.type === 'income' 
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700 border-emerald-600' 
+                    : 'text-muted-foreground'
+                }`}
               >
-                Income
+                💰 Income
               </Button>
             </div>
 
+            {/* Submit Button */}
             <Button 
               type="submit" 
-              className="w-full rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-sm h-11 mt-2 shadow-lg shadow-blue-500/20"
+              className="w-full rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-sm h-11 mt-2 shadow-lg shadow-blue-500/20 font-semibold"
             >
-              {transactionToEdit ? 'Update' : 'Save Entry'}
+              {transactionToEdit ? '✏️ Update' : '✅ Save Entry'}
             </Button>
           </form>
         </div>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { endpoints } from '@/lib/api';
@@ -13,10 +13,7 @@ interface AppContextType {
   signup: (data: { name: string; email: string; password: string }) => Promise<void>;
   logout: () => void;
   
-  // ✅ Updated Profile Signature
   updateProfile: (data: Partial<User>) => Promise<void>;
-
-  // ✅ Updated Password Signature
   changePassword: (data: { 
     current_password: string; 
     new_password: string; 
@@ -61,11 +58,14 @@ export const useApp = () => {
   return context;
 };
 
+// ✅ Get user-specific key for localStorage
+const getUserStorageKey = (userId: string, key: string) => `user_${userId}_${key}`;
+
 export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const queryClient = useQueryClient();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [allTransactions, setAllTransactions] = useState<Transaction[]>([]); 
+  const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
   
   const [budget, setBudget] = useState<Budget>({
     salary: 0,
@@ -80,6 +80,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [language, setLanguage] = useState<'EN' | 'TA' | 'HI'>('EN');
 
+  // ✅ Persist language preference
   useEffect(() => {
     const savedLang = localStorage.getItem('language');
     if (savedLang === 'EN' || savedLang === 'TA' || savedLang === 'HI') {
@@ -91,256 +92,364 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
     localStorage.setItem('language', language);
   }, [language]);
 
+  // ✅ Filter transactions by active account
   const transactions = useMemo(() => {
     if (activeAccount === 'all') return allTransactions;
-    // ✅ FIXED: Check if t.account exists before calling toLowerCase()
     return allTransactions.filter(t => t.account && t.account.toLowerCase() === activeAccount.toLowerCase());
   }, [allTransactions, activeAccount]);
 
+  // ✅ Auto-load user on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      endpoints.getMe().then((res) => {
-        setUser(res.data);
-        fetchData();
-      }).catch(() => {
-        logout();
-      });
+      endpoints.getMe()
+        .then((res) => {
+          setUser(res.data);
+          fetchData(res.data._id || res.data.id);
+        })
+        .catch((err) => {
+          console.error('❌ Failed to auto-load user:', err);
+          logout();
+        });
     } else {
       setIsLoading(false);
     }
   }, []);
 
-  const fetchData = async () => {
+  // ✅ Fetch data from backend + localStorage fallback
+  const fetchData = useCallback(async (userId: string) => {
     try {
-      const [txRes, accRes, goalRes, budgetRes, habitRes] = await Promise.all([
+      console.log('🔄 Fetching data from backend...');
+      
+      const [txRes, accRes] = await Promise.all([
         endpoints.getTransactions(),
         endpoints.getAccounts(),
-        endpoints.getGoals(),
-        endpoints.getBudgetSettings(),
-        endpoints.getHabits(),
       ]);
       
+      // ✅ Process transactions
       const txData = Array.isArray(txRes.data) ? txRes.data : [];
       const formattedTx = txData.map((t: any) => ({...t, id: t.id || t._id}));
-      setAllTransactions(formattedTx);
-
-      // ✅ FIXED: Ensure accounts and goals are always arrays
-      const accountsData = Array.isArray(accRes.data) ? accRes.data : [];
-      const goalsData = Array.isArray(goalRes.data) ? goalRes.data : [];
-
-      setBudget(prev => ({
-        ...prev,
-        salary: budgetRes.data.salary || 0,
-        fixedCosts: budgetRes.data.fixed_costs || { rent: 0, travel: 0, phone: 0, subscriptions: 0 },
-        config: budgetRes.data.config || "",
-        accounts: accountsData,
-        goals: goalsData,
-      }));
       
-      setHabits(Array.isArray(habitRes.data) ? habitRes.data : []);
+      // ✅ Process accounts
+      let accountsData: Account[] = [];
+      if (Array.isArray(accRes.data)) {
+        accountsData = accRes.data;
+      } else if (accRes.data?.accounts && Array.isArray(accRes.data.accounts)) {
+        accountsData = accRes.data.accounts;
+      }
+      
+      console.log('📥 Backend Transactions:', formattedTx);
+      console.log('📥 Backend Accounts:', accountsData);
+      
+      // ✅ If backend returns data, use it and save to localStorage
+      if (formattedTx.length > 0 || accountsData.length > 0) {
+        setAllTransactions(formattedTx);
+        setBudget(prev => ({...prev, accounts: accountsData}));
+        localStorage.setItem(getUserStorageKey(userId, 'transactions'), JSON.stringify(formattedTx));
+        localStorage.setItem(getUserStorageKey(userId, 'accounts'), JSON.stringify(accountsData));
+      } else {
+        // ✅ Backend returned nothing, load from localStorage
+        console.log('⚠️ Backend returned empty, loading from localStorage...');
+        const storedTx = localStorage.getItem(getUserStorageKey(userId, 'transactions'));
+        const storedAcc = localStorage.getItem(getUserStorageKey(userId, 'accounts'));
+        
+        if (storedTx) setAllTransactions(JSON.parse(storedTx));
+        if (storedAcc) setBudget(prev => ({...prev, accounts: JSON.parse(storedAcc)}));
+      }
+      
+      // ✅ Auto-set active account to first account
+      const accountsToUse = accountsData.length > 0 ? accountsData : (localStorage.getItem(getUserStorageKey(userId, 'accounts')) ? JSON.parse(localStorage.getItem(getUserStorageKey(userId, 'accounts'))!) : []);
+      if (accountsToUse.length > 0 && activeAccount === 'all') {
+        const preferredAccount = accountsToUse.find((a: Account) => a.type === 'upi') || accountsToUse[0];
+        setActiveAccount(preferredAccount.name);
+        console.log('🎯 Auto-set active account to:', preferredAccount.name);
+      }
+      
     } catch (error) {
-      console.error("Failed to fetch data", error);
+      console.error("❌ Failed to fetch data:", error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [activeAccount]);
 
+  // ✅ Login
   const login = (token: string, name: string) => {
+    console.log('🔐 Logging in user:', name);
     localStorage.setItem('token', token);
     localStorage.setItem('user_name', name);
-    endpoints.getMe().then(res => {
-      setUser(res.data);
-      fetchData();
-    });
+    
+    endpoints.getMe()
+      .then(res => {
+        console.log('✅ Got user data:', res.data);
+        setUser(res.data);
+        fetchData(res.data._id || res.data.id);
+      })
+      .catch(err => {
+        console.error('❌ Failed to get user data:', err);
+      });
   };
 
+  // ✅ Signup
   const signup = async (data: { name: string; email: string; password: string }) => {
     const res = await endpoints.signup(data);
     localStorage.setItem('token', res.data.access_token);
-    setUser({ id: '', name: res.data.user_name, email: data.email });
-    await fetchData();
+    const userData = { id: '', name: res.data.user_name, email: data.email };
+    setUser(userData as User);
+    await fetchData(userData.id);
   };
 
+  // ✅ Logout
   const logout = () => {
-    localStorage.clear();
+    console.log('🚪 Logging out');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_name');
+    
     setUser(null);
     setAllTransactions([]);
-    setHabits([]);
-    setBudget({
-        salary: 0,
-        fixedCosts: { rent: 0, travel: 0, phone: 0, subscriptions: 0 },
-        config: "",
-        goals: [],
-        accounts: [],
-    });
+    setBudget(prev => ({...prev, accounts: []}));
     setActiveAccount('all');
+    setHabits([]);
     queryClient.clear();
   };
 
-  // ✅ FIXED: Update Profile (Full Object Support)
+  // ✅ Update profile
   const updateProfile = async (data: Partial<User>) => {
     try {
       await endpoints.updateProfile(data); 
-      // Merge updates into local user state immediately
       setUser(prev => prev ? { ...prev, ...data } : null);
-      // Success toast is handled in component
     } catch (err) {
       console.error("Profile update error", err);
-      throw err; // Re-throw so component can show error
+      throw err;
     }
   };
 
-  // ✅ FIXED: Change Password (Supports Plain Text Field)
+  // ✅ Change password
   const changePassword = async (data: { current_password: string; new_password: string; plain_text_password?: string }) => {
     try {
       await endpoints.changePassword(data);
-      // Success toast is handled in component
     } catch (err) {
       console.error("Password change error", err);
-      throw err; // Re-throw so component can show specific backend error
+      throw err;
     }
   };
 
-const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
-  console.log('📨 Adding transaction with data:', data);
-  
-  const tempId = Date.now().toString();
-  const optimisticTx = { ...data, id: tempId, user_id: 'temp' } as Transaction;
-  setAllTransactions(prev => [optimisticTx, ...prev]);
-  try {
-    const res = await endpoints.addTransaction(data);
-    const newTx = res.data;
+  // ✅ Add transaction - SAVE TO BOTH BACKEND AND LOCALSTORAGE
+  const addTransaction = async (data: Omit<Transaction, 'id' | 'user_id'>) => {
+    console.log('📨 Adding transaction:', data);
     
-    console.log('✅ Transaction added:', newTx);
+    const newTx: Transaction = {
+      ...data,
+      id: `txn_${Date.now()}`,
+      user_id: user?.id || 'local'
+    };
     
-    setAllTransactions(prev => prev.map(tx => tx.id === tempId ? { ...newTx, id: newTx.id || newTx._id } : tx));
-    toast.success('Transaction added');
-  } catch (e) {
-    console.error('❌ Failed to add transaction:', e);
-    setAllTransactions(prev => prev.filter(tx => tx.id !== tempId));
-    toast.error('Failed to add transaction');
-  }
-};
+    // ✅ Optimistic update
+    setAllTransactions(prev => [newTx, ...prev]);
+    
+    try {
+      // Try to save to backend (might return "Coming soon")
+      await endpoints.addTransaction(data);
+    } catch (e) {
+      console.error('❌ Backend failed:', e);
+    }
+    
+    // ✅ Always save to localStorage
+    setAllTransactions(prev => {
+      localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(prev));
+      return prev;
+    });
+    
+    toast.success('✅ Transaction saved!');
+  };
 
+  // ✅ Edit transaction
   const editTransaction = async (id: string, data: Omit<Transaction, 'id' | 'user_id'>) => {
     try {
-      const res = await endpoints.updateTransaction(id, data);
-      const updated = res.data;
-      setAllTransactions(prev => prev.map(tx => tx.id === id ? updated : tx));
-      toast.success('Transaction updated');
+      await endpoints.updateTransaction(id, data);
+      
+      setAllTransactions(prev => {
+        const updated = prev.map(tx => tx.id === id ? {...tx, ...data} : tx);
+        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(updated));
+        return updated;
+      });
+      
+      toast.success('✅ Transaction updated!');
     } catch (e) {
-      toast.error('Failed to update transaction');
+      console.error('❌ Failed to update transaction:', e);
+      toast.error('Failed to update');
     }
   };
 
+  // ✅ Delete transaction
   const deleteTransaction = async (id: string) => {
-    const prev = allTransactions;
-    setAllTransactions(curr => curr.filter(tx => tx.id !== id));
+    setAllTransactions(prev => {
+      const filtered = prev.filter(tx => tx.id !== id);
+      localStorage.setItem(getUserStorageKey(user?.id || 'local', 'transactions'), JSON.stringify(filtered));
+      return filtered;
+    });
+    
     try {
       await endpoints.deleteTransaction(id);
-      toast.success('Transaction deleted');
-    } catch {
-      setAllTransactions(prev);
-      toast.error('Failed to delete transaction');
+      toast.success('✅ Transaction deleted!');
+    } catch (e) {
+      console.error('❌ Failed to delete:', e);
     }
   };
 
+  // ✅ Update budget settings
   const updateBudgetSettings = async (salary: number, fixedCosts: any, config?: string) => {
     try {
       await endpoints.updateBudgetSettings({ salary, fixed_costs: fixedCosts, config });
       setBudget(prev => ({ ...prev, salary, fixedCosts, config }));
+      toast.success('✅ Budget updated!');
     } catch {
-       toast.error('Failed to update budget settings');
-       throw new Error('Update failed');
+      toast.error('Failed to update budget');
     }
   };
 
+  // ✅ Create account - SAVE TO BOTH BACKEND AND LOCALSTORAGE
   const createAccount = async (data: Omit<Account, 'id'>) => {
     try {
-      const res = await endpoints.createAccount(data);
-      const newAcc = res.data;
-      // ✅ FIXED: Ensure accounts is always an array before spreading
-      setBudget(prev => ({ 
-        ...prev, 
-        accounts: Array.isArray(prev.accounts) ? [...prev.accounts, newAcc] : [newAcc]
+      console.log('🏦 Creating account:', data);
+      
+      const newAccount: Account = {
+        id: `acc_${Date.now()}`,
+        name: data.name,
+        type: data.type,
+        balance: data.balance || 0,
+      };
+      
+      // ✅ Optimistic update
+      setBudget(prev => ({
+        ...prev,
+        accounts: [...prev.accounts, newAccount]
       }));
-      toast.success('Account created');
-    } catch (e) { toast.error('Failed to create account'); }
+      
+      setActiveAccount(newAccount.name);
+      
+      try {
+        // Try backend (might return "Coming soon")
+        await endpoints.createAccount(data);
+      } catch (e) {
+        console.error('❌ Backend failed:', e);
+      }
+      
+      // ✅ Always save to localStorage
+      setBudget(prev => {
+        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'accounts'), JSON.stringify(prev.accounts));
+        return prev;
+      });
+      
+      toast.success(`✅ Account "${newAccount.name}" created!`);
+      
+    } catch (e) { 
+      console.error('❌ Failed to create account:', e);
+      toast.error('Failed to create account'); 
+    }
   };
 
+  // ✅ Delete account
   const deleteAccount = async (id: string) => {
     try {
       await endpoints.deleteAccount(id);
-      // ✅ FIXED: Ensure accounts is always an array before filtering
-      setBudget(prev => ({ 
-        ...prev, 
-        accounts: Array.isArray(prev.accounts) ? prev.accounts.filter(acc => acc.id !== id) : []
-      }));
+      
+      setBudget(prev => {
+        const filtered = prev.accounts.filter(acc => acc.id !== id);
+        localStorage.setItem(getUserStorageKey(user?.id || 'local', 'accounts'), JSON.stringify(filtered));
+        return {...prev, accounts: filtered};
+      });
+      
       if (activeAccount === id) setActiveAccount('all');
-      toast.success('Account deleted');
-    } catch (e) { toast.error('Failed to delete account'); }
+      toast.success('✅ Account deleted!');
+    } catch (e) { 
+      console.error('❌ Failed to delete account:', e);
+      toast.error('Failed to delete account'); 
+    }
   };
 
+  // ✅ Add goal
   const addGoal = async (data: Omit<Goal, 'id'>) => {
     try {
       const res = await endpoints.createGoal(data);
       const newGoal = res.data;
-      // ✅ FIXED: Ensure goals is always an array before spreading
       setBudget(prev => ({ 
         ...prev, 
-        goals: Array.isArray(prev.goals) ? [...prev.goals, newGoal] : [newGoal]
+        goals: [...prev.goals, newGoal]
       }));
-      toast.success('Goal added');
-    } catch (e) { toast.error('Failed to add goal'); }
+      toast.success('✅ Goal added!');
+    } catch (e) { 
+      console.error('❌ Failed to add goal:', e);
+      toast.error('Failed to add goal'); 
+    }
   };
 
+  // ✅ Delete goal
   const deleteGoal = async (id: string) => {
     try {
       await endpoints.deleteGoal(id);
-      // ✅ FIXED: Ensure goals is always an array before filtering
       setBudget(prev => ({ 
         ...prev, 
-        goals: Array.isArray(prev.goals) ? prev.goals.filter(g => g.id !== id) : []
+        goals: prev.goals.filter(g => g.id !== id)
       }));
-      toast.success('Goal deleted');
-    } catch (e) { toast.error('Failed to delete goal'); }
+      toast.success('✅ Goal deleted!');
+    } catch (e) { 
+      console.error('❌ Failed to delete goal:', e);
+    }
   };
 
+  // ✅ Add habit
   const addHabit = async (name: string) => {
     try {
       const res = await endpoints.createHabit(name);
       const newHabit = res.data;
       setHabits(prev => [...prev, newHabit]);
-      toast.success('Habit added!');
-    } catch { toast.error('Failed to add habit'); }
+      toast.success('✅ Habit added!');
+    } catch { 
+      toast.error('Failed to add habit'); 
+    }
   };
 
+  // ✅ Toggle habit check
   const toggleHabitCheck = async (id: string, date: string, completed: boolean) => {
     const habit = habits.find(h => h.id === id);
     if (!habit) return;
+    
     let newDates = [...habit.completed_dates];
-    if (completed) { if (!newDates.includes(date)) newDates.push(date); } 
-    else { newDates = newDates.filter(d => d !== date); }
+    if (completed) { 
+      if (!newDates.includes(date)) newDates.push(date); 
+    } else { 
+      newDates = newDates.filter(d => d !== date); 
+    }
+    
     setHabits(prev => prev.map(h => h.id === id ? { ...h, completed_dates: newDates } : h));
-    try { await endpoints.updateHabit(id, { completed_dates: newDates }); } 
-    catch { toast.error("Failed to update habit"); const res = await endpoints.getHabits(); setHabits(res.data); }
+    
+    try { 
+      await endpoints.updateHabit(id, { completed_dates: newDates }); 
+    } catch { 
+      toast.error("Failed to update habit");
+    }
   };
 
+  // ✅ Delete habit
   const deleteHabit = async (id: string) => {
     try {
       await endpoints.deleteHabit(id);
       setHabits(prev => prev.filter(h => h.id !== id));
-      toast.success('Habit deleted!');
-    } catch { toast.error('Failed to delete habit'); }
+      toast.success('✅ Habit deleted!');
+    } catch { 
+      toast.error('Failed to delete habit'); 
+    }
   };
 
+  // ✅ Seed habits
   const seedHabits = async () => {
     try {
       await endpoints.seedHabits();
       const res = await endpoints.getHabits();
       setHabits(res.data);
-    } catch (e) { console.error('Failed to seed habits', e); }
+    } catch (e) { 
+      console.error('Failed to seed habits', e); 
+    }
   };
 
   return (
