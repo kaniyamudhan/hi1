@@ -135,6 +135,17 @@ export const endpoints = {
   updateAdminUserPassword: (userId: string, new_password: string) =>
     api.put(`/admin/users/${userId}/password`, { new_password }),
   adminCreateUser: (data: any) => api.post('/admin/users', data),
+
+  // ✅ NEW: Monthly Planner Endpoints
+  getMonthlyPlan: (month: string) => api.get(`/planner/month/${month}`),
+  getAllPlans: () => api.get('/planner/plans'),
+  createMonthlyPlan: (data: any) => api.post('/planner/plans', data),
+  updateMonthlyPlan: (planId: string, data: any) => api.put(`/planner/plans/${planId}`, data),
+  addCategoryToPlan: (planId: string, category: any) => api.post(`/planner/plans/${planId}/categories`, category),
+  updateCategoryInPlan: (planId: string, categoryId: string, data: any) => api.put(`/planner/plans/${planId}/categories/${categoryId}`, data),
+  deleteCategoryFromPlan: (planId: string, categoryId: string) => api.delete(`/planner/plans/${planId}/categories/${categoryId}`),
+  copyMonthlyPlan: (fromMonth: string, toMonth: string) => api.post('/planner/copy-plan', { fromMonth, toMonth }),
+  getMonthlyPlanStats: (planId: string) => api.get(`/planner/plans/${planId}/stats`),
 };
 
 export default api;
