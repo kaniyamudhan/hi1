@@ -1,7 +1,7 @@
 // NEW FILE
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { MonthlyPlan, PlanCategory, PlanningMonth, AllocationAlert } from '@/types/planner';
-import { plannerApi } from '@/lib/plannerApi';
+import { plannerApi } from '@/lib/PlannerApi';
 import { toast } from 'sonner';
 
 interface PlannerContextType {

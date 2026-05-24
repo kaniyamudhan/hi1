@@ -42,7 +42,6 @@ export default function MonthlyPlannerPage() {
     await addCategory({
       name: newCategoryName,
       amount: parseFloat(newCategoryAmount),
-      spent: 0,
       priority: newCategoryPriority,
       icon: '💰',
     });
